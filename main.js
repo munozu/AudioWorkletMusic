@@ -38,7 +38,7 @@ async function init(first) {
 
     if (first === 1) {
         info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. press any keys`;
-        if (0&&document.location.href.indexOf("127.0.0.1") != -1) connect();
+        if (document.location.href.indexOf("127.0.0.1") != -1) connect();
         else {
             window.addEventListener("keydown", connect);
             window.addEventListener("mousemove", connect);
@@ -117,7 +117,6 @@ const analyser = {
         if (this.vuTxt) {
             this.canvasCtx.font = "12px monospace";
             this.canvasCtx.fillStyle = "black";
-            this.canvasCtx.lineWidth = 1;
             this.canvasCtx.fillText(this.vuTxt, 0, this.height);
         }
         this.animId = requestAnimationFrame(this.loop.bind(this));
@@ -147,6 +146,8 @@ const analyser = {
         }
         cc.moveTo(w, h);
         cc.stroke();
+        cc.fillStyle = "#fff8";
+        cc.fill();
     }
 }
 
