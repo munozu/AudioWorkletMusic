@@ -1,12 +1,14 @@
+
 Object.getOwnPropertyNames(Math).forEach(p => self[p] = Math[p]);
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const gE = id => { return document.getElementById(id) };
 const gV = id => { return parseFloat(gE(id).value) };
-let info, paramContainers, context, processor, connecting;
+let info, paramContainers, context, processor, wavCreator, connecting;
 
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
+    gE("record").addEventListener("click", _ => wavCreator.exec());
     analyser.setup();
     try { await init(1); } catch (error) { info.textContent = error; return; }
     setupEvents();
@@ -20,11 +22,13 @@ function setupEvents() {
 async function init(first) {
     connecting = false;
     if (context) context.close();
+    analyser.stop();
     let lh = (first === 1) ? 1 : gV("latency");
     // context = new AudioContext({ latencyHint: lh });
     context = new AudioContext({ latencyHint: lh, sampleRate: 24000 });
 
     await context.audioWorklet.addModule('worklet.js');
+
     processor = await new AudioWorkletNode(context, 'processor', { outputChannelCount: [2] });
     processor.onprocessorerror = e => { console.log(e); info.textContent = "error"; }
     processor.port.onmessage = e => {
@@ -33,12 +37,13 @@ async function init(first) {
         else gE(e.data.id).value = e.data.value;
     }
 
+    await setupWavCreator();
     setupParams();
-
     gE("latency").value = context.baseLatency;
 
     if (first === 1) {
         info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. press any keys`;
+        if (new URLSearchParams(window.location.search).get("auto") == "false") return;
         if (document.location.href.indexOf("127.0.0.1") != -1) connect();
         else {
             window.addEventListener("keydown", connect);
@@ -67,10 +72,10 @@ function postMessage(id, value) {
 }
 
 const analyser = {
-    vuTxt:[],
+    vuTxt: [],
     buffer: null,
-    modeNum:1,
-    unknownLen:100,
+    modeNum: 1,
+    unknownLen: 100,
     setup() {
         this.element = gE("analyser");
         this.div = gE("analyser-text");
@@ -79,16 +84,16 @@ const analyser = {
         this.element.addEventListener("click", this.handleClick.bind(this));
         this.modes = [
             null,
-            {func:this.spectrum, fftSize:2048},
-            {func:this.spectrum3d, fftSize:2048}
+            { func: this.spectrum, fftSize: 2048 },
+            { func: this.spectrum3d, fftSize: 2048 }
         ];
     },
-    init(){
-        if(this.modeNum==0)return;
+    init() {
+        if (this.modeNum == 0) return;
         this.isRunning = true;
         this.canvasCtx = this.element.getContext("2d");
         this.node = context.createAnalyser();
-        
+
         let m = this.modes[this.modeNum];
         this.draw = m.func;
         this.node.fftSize = m.fftSize;
@@ -100,14 +105,12 @@ const analyser = {
         this.setupGuide(this.bufferSize, this.width, this.height);
         processor.connect(this.node);
         this.loop();
-
     },
-    handleClick(e){
-        if(!connecting)return;
+    handleClick(e) {
+        if (!connecting) return;
         this.stop();
-        if(++this.modeNum>=this.modes.length)this.modeNum = 0;
+        if (++this.modeNum >= this.modes.length) this.modeNum = 0;
         else this.init();
-        
     },
     setupGuide(bufferSize, w, h) {
         this.posList = [];
@@ -120,19 +123,21 @@ const analyser = {
         let nyquistF = context.sampleRate / 2
         let leftEnd = log2(1 / bufferSize * nyquistF);
         let rightEnd = log2(nyquistF) - leftEnd;
+
         this.posList[0] = 0;
         for (let i = 1; i < bufferSize; i++) {
             let hz = i / bufferSize * nyquistF;
             this.posList[i] = (log2(hz) - leftEnd) / rightEnd * w;
         }
-        this.posList3dX = this.posList.map(v=>(v/w-0.5)*w * 0.43 + w/2 );
-        for (let i = 0, l=this.unknownLen; i < l; i++) {
-            let y = h -( (l-i)/l)*h ;
-            y = h/2 + (y/h-0.5)*h *0.53;
-            this.posList3dY.push(y)
+
+        this.posList3dX = this.posList.map(v => (v / w - 0.5) * w * 0.43 + w / 2);
+
+        for (let i = 0, l = this.unknownLen; i < l; i++) {
+            let y = h - ((l - i) / l) * h;
+            y = h / 2 + (y / h - 0.5) * h * 0.53;
+            this.posList3dY.push(y);
         }
-        
-        
+
         function pushLines(list, digit = 10, len = 10) {
             for (let i = 1; i < len; i++) {
                 let hz = digit * i;
@@ -145,32 +150,33 @@ const analyser = {
         pushLines(this.guideList, 100);
         pushLines(this.guideList, 1000);
         pushLines(this.guideList, 10000);
+
         [100, 1000, 10000].forEach(n => {
             let x = (log2(n) - leftEnd) / rightEnd * w;
             this.guideListDigit.push(round(x));
         });
+
         for (let hz = 25; hz < nyquistF; hz *= 2) {
             let x = (log2(hz) - leftEnd) / rightEnd * w;
             this.guideListOctave.push(round(x));
         }
     },
     stop() {
-        if(!this.isRunning)return;
+        if (!this.isRunning) return;
         this.isRunning = false;
         this.canvasCtx.fillStyle = "white";
-        this.canvasCtx.fillText("analyser stopped",0,12)
+        this.canvasCtx.fillText("analyser stopped", 0, 12)
         cancelAnimationFrame(this.animId);
         this.draw = null;
     },
     setVu(data) {
-        if(this.modeNum==0)return;
+        if (this.modeNum == 0) return;
         this.div.textContent = [
             " Time: " + floor(data.time),
             "PeakL: " + data.l.toFixed(3),
             "PeakR: " + data.r.toFixed(3),
             "  Max: " + data.max.toFixed(3),
         ].join("\n");
-
     },
     loop() {
         this.draw(this.canvasCtx, this.bufferSize, this.width, this.height);
@@ -183,27 +189,26 @@ const analyser = {
         cc.strokeStyle = "#fff";
         cc.fillStyle = "#000";
         this.node.getByteFrequencyData(this.buffer);
-        
 
         this.spectrum3dList[this.ind3d] = new Uint8Array(this.buffer);
         let list = this.spectrum3dList;
         let l = this.unknownLen;
-        for(let j=0; j<l; j+=4){
-            let ind = this.ind3d+1-l+j;
-            if(ind<0)ind+=l;
-            if(!list[ind])continue;
+        for (let j = 0; j < l; j += 4) {
+            let ind = this.ind3d + 1 - l + j;
+            if (ind < 0) ind += l;
+            if (!list[ind]) continue;
             cc.beginPath();
             let by = this.posList3dY[j];
-            cc.moveTo( this.posList3dX[0], by);
-            for (let i = 0, c = h / 256 *0.05; i < bufferSize; i= floor((i+1)*1.1) ) {
+            cc.moveTo(this.posList3dX[0], by);
+            for (let i = 0, c = h / 256 * 0.05; i < bufferSize; i = floor((i + 1) * 1.1)) {
                 let y = by - list[ind][i] * c;
-                cc.lineTo( this.posList3dX[i], y );
+                cc.lineTo(this.posList3dX[i], y);
             }
             cc.fill();
             cc.stroke();
         }
-        
-        if(++this.ind3d>=l)this.ind3d-=l;
+
+        if (++this.ind3d >= l) this.ind3d -= l;
     },
     spectrum(cc, bufferSize, w, h) {
         cc.fillStyle = "MediumAquaMarine";
@@ -235,12 +240,31 @@ const analyser = {
     }
 }
 
+async function setupWavCreator() {
+    wavCreator = await new AudioWorkletNode(context, "wavCreator");
+    wavCreator.port.onmessage = e => {
+        let blob = new Blob([e.data], { type: "audio/wav" });
+        let urlObj = URL.createObjectURL(blob);
+        let a = document.createElement("a");
+        a.href = urlObj;
+        a.textContent = "save wav. " + new Date().toLocaleString();
+        a.download = document.title + "----" + new Date().toLocaleString();
+        gE("wav-container").appendChild(a);
+        info.textContent = "wav created";
+    }
+    let recording = false;
+    wavCreator.exec = _ => {
+        recording = !recording;
+        info.textContent = recording ? "recording..." : "creating wav";
+        wavCreator.port.postMessage(1);
+    }
+}
 
 // 以下インタラクティブ用
 function setupParams() {
     gE("param-container").innerHTML = "";
     let setupMessenger = new AudioWorkletNode(context, "setup");
-    setupMessenger.port.onmessage = event => createParameters(event.data);
+    setupMessenger.port.onmessage = e => createParameters(e.data);
     setupMessenger.port.postMessage(1);
 }
 
@@ -327,10 +351,10 @@ function createInput(p) {
     paramContainers.appendChild(textNode);
     paramContainers.appendChild(document.createElement("BR"));
 
-    if (!p.ramp) inputEl.addEventListener("change", _ => postMessage(p.name, pow(inputEl.value, exp)));
-    else inputEl.addEventListener("change", _ => {
+    if (p.ramp) inputEl.addEventListener("change", _ => {
         let value = inputEl.value;
         info.textContent = p.name + " " + value;
         processor.parameters.get(p.name).linearRampToValueAtTime(value, context.currentTime + (p.time || 0.1));
     });
+    else inputEl.addEventListener("change", _ => postMessage(p.name, pow(inputEl.value, exp)));
 }

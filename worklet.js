@@ -1,3 +1,6 @@
+import * as wavModule from "/wav.js";
+import {SetTarget} from "/class.js";
+
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs;
 //math
 //Object.getOwnPropertyNames(Math).forEach(p=>self[p]=Math[p]);
@@ -57,27 +60,9 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
-class SetTarget {
-    constructor(iniValue = 0, tc = 0.01, iniTargetValue = iniValue) {
-        this.v0 = this.gain = iniValue;
-        this.v1 = iniTargetValue;
-        this.t = 0;
-        this.setTC(tc);
-    }
-    setTC(v) { this.TC = v * Fs; }
-    setValue(targetValue) {
-        this.v0 = this.gain;
-        this.v1 = targetValue;
-        this.t = 0;
-    }
-    exec() {
-        this.gain = this.v1 + (this.v0 - this.v1) * exp(-(this.t++ / this.TC));
-        return this.gain;
-    }
-}
 
 class Mixer{
-    constructor(numTracks=16){
+    constructor(numTracks=64){
         this.tracks = [];
         for(let i=0;i<numTracks;i++)this.tracks.push({amp:1, pan:0, l:panL(0), r:panR(0)});
     }
@@ -94,10 +79,10 @@ class Mixer{
 }
 
 class MasterAmp{
-    constructor(){
-        this.setTarget = new SetTarget(0, 0.1, constParams.masterAmp);
+    constructor(iniTarget){
+        this.setTarget = new SetTarget(0, 0.1, iniTarget);
         this.gain = 0;
-        this.preTarget = 1;
+        this.preTarget = iniTarget;
         this.preMax = 0;
         this.prePeakL = 0;
         this.prePeakR = 0;
@@ -179,23 +164,51 @@ class Processor extends AudioWorkletProcessor {
     }
 }
 
-let mixer, masterAmp;
+let mixer, masterAmp, recording = false, exportSec=60*0;
 function setup(){
     constParams.setup(parameters);
     mixer = new Mixer();
-    masterAmp = new MasterAmp();
+    masterAmp = new MasterAmp(constParams.masterAmp);
     
     Processor.prototype.process = process;
     registerProcessor('processor', Processor);
     registerProcessor('setup', class extends Processor {
         constructor() {
             super();
-            let t = this;
-            let param = JSON.parse(JSON.stringify(parameters));//callback関数を除去
-            this.port.onmessage = _ => t.port.postMessage(param);
+            let params = JSON.parse(JSON.stringify(parameters));
+            this.port.onmessage = function(){this.port.postMessage(params)}.bind(this);
         }
     });
+    registerProcessor('wavCreator', class extends Processor {
+        constructor() {
+            super();
+            this.port.onmessage = function(e){
+                recording = !recording;
+                if(!recording)this.port.postMessage(wavModule.get());
+            }.bind(this);
+
+            if(exportSec)this.export(exportSec);
+        }
+        export(sec){
+            let output = {l:[],r:[]};
+            let n = Date.now();
+            for(let i=0,l=Fs*sec;i<l;i+=128){
+                let buffer = [[new Array(128).fill(0),new Array(128).fill(0)]];
+                process(null,buffer);
+                for(let j=0;j<128;j++){
+                    output.l.push( buffer[0][0][j] );
+                    output.r.push( buffer[0][1][j] );
+                }
+            }
+            console.log("exportSec: " + exportSec);
+            console.log( (Date.now()-n)/1000 + "s elapsed");
+            exportSec = 0;
+            this.port.postMessage( wavModule.get(output) );
+        }
+    });
+    
 }
+
 
 /////////////////////////////////////////////////////////////////////////
 const parameters = [
@@ -226,7 +239,7 @@ let vibPhaseList = new Array(length).fill(0);
 let shapers = [tanh,s=>sineCurve(s),s=>s,s=>s*s*s];
 
 let frame = Fs*0;
-let vol = 0.5;
+let vol = 0.45;
 for(let i=0,l=baseList.length;i<l;i++){
     let b = baseList[i];
     mixer.setTrack( i, (b*6.55)%2-1, vol );
@@ -252,13 +265,13 @@ function process(inputs, outputs, parameters) {
             s *= uni( sin(fi*lfo2[j]) );
             s *= uni( sin(fi*lfo3[j]) );
             s = shapers[j%4](s);
-            // s += noise()*0.01
             mixer.track(j,s,outL,outR,i);
         }
         /////////////////////////////////////////////////////////////////////////
     }
-    
-    for(let i=0; i<bufferLen; i++)masterAmp.exec(outL,outR,i,frame+i,this);
+    if(recording){ for(let i=0; i<bufferLen; i++)wavModule.record(outL[i],outR[i]); }
+    if(!exportSec){ for(let i=0; i<bufferLen; i++)masterAmp.exec(outL,outR,i,frame+i,this) };
     frame += bufferLen;
     return true;
 }
+
