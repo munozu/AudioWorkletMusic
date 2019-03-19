@@ -8,7 +8,7 @@
     <title>Audio Worklet Music</title>
     <style>
         * {
-            font-family: monospace;
+            font-family: Consolas,Menlo,Monaco,Lucida Console,Liberation Mono,DejaVu Sans Mono,Bitstream Vera Sans Mono,Courier New,monospace,sans-serif;
             user-select: none;
         }
 
@@ -34,11 +34,13 @@
             display: inline-block;
         }
 
-        canvas {
-            background: orange;
-            width: 320px;
-            height: 160px;
+        #analyser {
             border: #ccc 1px solid;
+        }
+        #analyser-text{
+            display:inline-block;
+            font-size: smaller;
+            white-space: pre;
         }
     </style>
     <script src="main.js"></script>
@@ -49,7 +51,8 @@
     <button id="init">init</button>
     <button id="connect">(dis)connect</button>
     <br><br>
-    <canvas id="analyser"></canvas>
+    <canvas id="analyser" width=320 height=160></canvas>
+    <div id="analyser-text"></div>
     <div id="param-container"></div>
     <br>
     <br>

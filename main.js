@@ -7,6 +7,7 @@ let info, paramContainers, context, processor, connecting;
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
+    analyser.setup();
     try { await init(1); } catch (error) { info.textContent = error; return; }
     setupEvents();
 });
@@ -57,7 +58,7 @@ function connect() {
     connecting = !connecting;
     context[(connecting ? "resume" : "suspend")]();
     processor[(connecting ? "connect" : "disconnect")](context.destination);
-    analyser[(connecting ? "setup" : "stop")]();
+    analyser[(connecting ? "init" : "stop")]();
     info.textContent = (connecting ? "connected" : "disconnected");
 }
 
@@ -66,88 +67,171 @@ function postMessage(id, value) {
 }
 
 const analyser = {
-    isRunning: false,
-    posList: [],
-    guideList: [],
-    guideListBold: [],
+    vuTxt:[],
     buffer: null,
+    modeNum:1,
+    unknownLen:100,
     setup() {
         this.element = gE("analyser");
+        this.div = gE("analyser-text");
         this.width = this.element.width;
         this.height = this.element.height;
+        this.element.addEventListener("click", this.handleClick.bind(this));
+        this.modes = [
+            null,
+            {func:this.spectrum, fftSize:2048},
+            {func:this.spectrum3d, fftSize:2048}
+        ];
+    },
+    init(){
+        if(this.modeNum==0)return;
+        this.isRunning = true;
         this.canvasCtx = this.element.getContext("2d");
-        this.element.addEventListener("click", _ => this.stop());
-
         this.node = context.createAnalyser();
+        
+        let m = this.modes[this.modeNum];
+        this.draw = m.func;
+        this.node.fftSize = m.fftSize;
         this.bufferSize = this.node.frequencyBinCount;
-
         this.buffer = new Uint8Array(this.bufferSize);
-        this.setupGuide(this.bufferSize, this.width);
+
+        this.spectrum3dList = [];
+        this.ind3d = 0;
+        this.setupGuide(this.bufferSize, this.width, this.height);
         processor.connect(this.node);
         this.loop();
 
     },
-    setupGuide(bufferSize, w) {
+    handleClick(e){
+        if(!connecting)return;
+        this.stop();
+        if(++this.modeNum>=this.modes.length)this.modeNum = 0;
+        else this.init();
+        
+    },
+    setupGuide(bufferSize, w, h) {
+        this.posList = [];
+        this.posList3dX = [];
+        this.posList3dY = [];
+        this.posList = [];
+        this.guideList = [];
+        this.guideListOctave = [];
+        this.guideListDigit = [];
         let nyquistF = context.sampleRate / 2
         let leftEnd = log2(1 / bufferSize * nyquistF);
         let rightEnd = log2(nyquistF) - leftEnd;
-        for (let i = 0; i < bufferSize; i++) {
+        this.posList[0] = 0;
+        for (let i = 1; i < bufferSize; i++) {
             let hz = i / bufferSize * nyquistF;
             this.posList[i] = (log2(hz) - leftEnd) / rightEnd * w;
         }
-        for (let hz = 25; hz < nyquistF; hz *= 2) {
-            let x = (log2(hz) - leftEnd) / rightEnd * w;
-            this.guideList.push(round(x));
+        this.posList3dX = this.posList.map(v=>(v/w-0.5)*w * 0.43 + w/2 );
+        for (let i = 0, l=this.unknownLen; i < l; i++) {
+            let y = h -( (l-i)/l)*h ;
+            y = h/2 + (y/h-0.5)*h *0.53;
+            this.posList3dY.push(y)
         }
+        
+        
+        function pushLines(list, digit = 10, len = 10) {
+            for (let i = 1; i < len; i++) {
+                let hz = digit * i;
+                if (hz != clamp(hz, 1 / bufferSize * nyquistF, nyquistF)) continue;
+                let x = (log2(hz) - leftEnd) / rightEnd * w;
+                list.push(round(x));
+            }
+        }
+        pushLines(this.guideList, 10);
+        pushLines(this.guideList, 100);
+        pushLines(this.guideList, 1000);
+        pushLines(this.guideList, 10000);
         [100, 1000, 10000].forEach(n => {
             let x = (log2(n) - leftEnd) / rightEnd * w;
-            this.guideListBold.push(round(x));
+            this.guideListDigit.push(round(x));
         });
+        for (let hz = 25; hz < nyquistF; hz *= 2) {
+            let x = (log2(hz) - leftEnd) / rightEnd * w;
+            this.guideListOctave.push(round(x));
+        }
     },
     stop() {
+        if(!this.isRunning)return;
+        this.isRunning = false;
+        this.canvasCtx.fillStyle = "white";
+        this.canvasCtx.fillText("analyser stopped",0,12)
         cancelAnimationFrame(this.animId);
+        this.draw = null;
     },
     setVu(data) {
-        this.vuTxt = `L:${data.l.toFixed(3)} R:${data.r.toFixed(3)} Max:${data.max.toFixed(3)} `
-            + `Time:${floor(data.time)} `
+        if(this.modeNum==0)return;
+        this.div.textContent = [
+            " Time: " + floor(data.time),
+            "PeakL: " + data.l.toFixed(3),
+            "PeakR: " + data.r.toFixed(3),
+            "  Max: " + data.max.toFixed(3),
+        ].join("\n");
 
     },
     loop() {
-        this.draw(this.canvasCtx, this.bufferSize, this.width, this.height + 2);
-        if (this.vuTxt) {
-            this.canvasCtx.font = "12px monospace";
-            this.canvasCtx.fillStyle = "black";
-            this.canvasCtx.fillText(this.vuTxt, 0, this.height);
-        }
+        this.draw(this.canvasCtx, this.bufferSize, this.width, this.height);
         this.animId = requestAnimationFrame(this.loop.bind(this));
     },
-    draw(cc, bufferSize, w, h) {
-        cc.fillStyle = "orange";
+    spectrum3d(cc, bufferSize, w, h) {
+        cc.fillStyle = "black";
         cc.fillRect(0, 0, w, h);
+
+        cc.strokeStyle = "#fff";
+        cc.fillStyle = "#000";
+        this.node.getByteFrequencyData(this.buffer);
+        
+
+        this.spectrum3dList[this.ind3d] = new Uint8Array(this.buffer);
+        let list = this.spectrum3dList;
+        let l = this.unknownLen;
+        for(let j=0; j<l; j+=4){
+            let ind = this.ind3d+1-l+j;
+            if(ind<0)ind+=l;
+            if(!list[ind])continue;
+            cc.beginPath();
+            let by = this.posList3dY[j];
+            cc.moveTo( this.posList3dX[0], by);
+            for (let i = 0, c = h / 256 *0.05; i < bufferSize; i= floor((i+1)*1.1) ) {
+                let y = by - list[ind][i] * c;
+                cc.lineTo( this.posList3dX[i], y );
+            }
+            cc.fill();
+            cc.stroke();
+        }
+        
+        if(++this.ind3d>=l)this.ind3d-=l;
+    },
+    spectrum(cc, bufferSize, w, h) {
+        cc.fillStyle = "MediumAquaMarine";
+        cc.fillRect(0, 0, w, h);
+        cc.lineWidth = 1;
         cc.fillStyle = "#888";
         for (let i = 0, l = this.guideList.length; i < l; i++) {
             cc.fillRect(this.guideList[i], 0, 1, h);
         }
-        cc.fillStyle = "#444";
-        for (let i = 0, l = this.guideListBold.length; i < l; i++) {
-            cc.fillRect(this.guideListBold[i], 0, 1, h);
-        }
 
+        cc.fillStyle = "#fffc";
         this.node.getByteFrequencyData(this.buffer);
-        cc.strokeStyle = "white";
-        cc.lineWidth = 2;
         cc.beginPath();
         cc.moveTo(-1, h);
-
-
         for (let i = 0, c = h / 256; i < bufferSize; i++) {
             let y = h - this.buffer[i] * c;
             cc.lineTo(this.posList[i], y);
         }
         cc.moveTo(w, h);
-        cc.stroke();
-        cc.fillStyle = "#fff8";
         cc.fill();
+
+        cc.fillStyle = "#444";
+        for (let i = 0, l = this.guideListDigit.length; i < l; i++) {
+            cc.fillRect(this.guideListDigit[i], 0, 2, 2);
+        }
+        for (let i = 0, l = this.guideListOctave.length; i < l; i++) {
+            cc.fillRect(this.guideListOctave[i], h - 2, 2, 2);
+        }
     }
 }
 

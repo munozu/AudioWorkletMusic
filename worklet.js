@@ -199,7 +199,7 @@ function setup(){
 
 /////////////////////////////////////////////////////////////////////////
 const parameters = [
-    { name: 'masterAmp', defaultValue: 0.8, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     // { type: "separator", value: "parameters" },
     // { name: 'param1', defaultValue: 1, minValue: 1, maxValue: 10, type: "number", step:1 },
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
@@ -226,7 +226,7 @@ let vibPhaseList = new Array(length).fill(0);
 let shapers = [tanh,s=>sineCurve(s),s=>s,s=>s*s*s];
 
 let frame = Fs*0;
-let vol = 0.65;
+let vol = 0.5;
 for(let i=0,l=baseList.length;i<l;i++){
     let b = baseList[i];
     mixer.setTrack( i, (b*6.55)%2-1, vol );
@@ -252,6 +252,7 @@ function process(inputs, outputs, parameters) {
             s *= uni( sin(fi*lfo2[j]) );
             s *= uni( sin(fi*lfo3[j]) );
             s = shapers[j%4](s);
+            // s += noise()*0.01
             mixer.track(j,s,outL,outR,i);
         }
         /////////////////////////////////////////////////////////////////////////
