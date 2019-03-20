@@ -3,31 +3,52 @@ Object.getOwnPropertyNames(Math).forEach(p => self[p] = Math[p]);
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const gE = id => { return document.getElementById(id) };
 const gV = id => { return parseFloat(gE(id).value) };
-let info, paramContainers, context, processor, wavCreator, connecting;
+let info, paramContainers;
+let context, processor, wavCreator;
+let connecting, exportState = 0, autoStart, countInit = 0;
+let scoreNumList = [1], scoreNum = 0;
 
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
-    gE("record").addEventListener("click", _ => wavCreator.exec());
+
+    for (let n of scoreNumList) {
+        let o = document.createElement("option");
+        o.textContent = n;
+        gE("select-score").appendChild(o);
+    }
+    autoStart = new URLSearchParams(window.location.search).get("auto") != "false";
     analyser.setup();
-    try { await init(1); } catch (error) { info.textContent = error; return; }
+    try { await init(); } catch (error) { info.textContent = error; return; }
     setupEvents();
 });
 
 function setupEvents() {
     gE("init").addEventListener("click", init);
     gE("connect").addEventListener("click", connect);
+    gE("export").addEventListener("click", _ => wavCreator.export());
+    gE("record").addEventListener("click", _ => wavCreator.record());
+    gE("select-score").addEventListener("change", e => {
+        for (let o of e.target.children) {
+            if (!o.selected) continue;
+            scoreNum = parseInt(o.textContent);
+            init();
+        }
+    });
 }
 
-async function init(first) {
+async function init() {
+    if (exportState == 2) return;
     connecting = false;
     if (context) context.close();
     analyser.stop();
-    let lh = (first === 1) ? 1 : gV("latency");
+
+    let lh = (++countInit === 1) ? 1 : gV("latency");
+
     // context = new AudioContext({ latencyHint: lh });
     context = new AudioContext({ latencyHint: lh, sampleRate: 24000 });
 
-    await context.audioWorklet.addModule('worklet.js');
+    await context.audioWorklet.addModule(`score${scoreNum}.js`);
 
     processor = await new AudioWorkletNode(context, 'processor', { outputChannelCount: [2] });
     processor.onprocessorerror = e => { console.log(e); info.textContent = "error"; }
@@ -37,17 +58,26 @@ async function init(first) {
         else gE(e.data.id).value = e.data.value;
     }
 
+
     await setupWavCreator();
+    if (exportState == 1) return;
+
     setupParams();
     gE("latency").value = context.baseLatency;
 
-    if (first === 1) {
-        info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. press any keys`;
-        if (new URLSearchParams(window.location.search).get("auto") == "false") return;
+    if (countInit === 1) {
+        info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. `
+        if (!autoStart) return;
+        info.textContent += `press any keys`;
         if (document.location.href.indexOf("127.0.0.1") != -1) connect();
         else {
-            window.addEventListener("keydown", connect);
-            window.addEventListener("mousemove", connect);
+            window.addEventListener("keydown", autoConnect);
+            window.addEventListener("mousemove", autoConnect);
+            function autoConnect() {
+                window.removeEventListener("keydown", autoConnect);
+                window.removeEventListener("mousemove", autoConnect);
+                connect();
+            }
         }
     }
     else {
@@ -57,9 +87,7 @@ async function init(first) {
 }
 
 function connect() {
-    window.removeEventListener("keydown", connect);
-    window.removeEventListener("mousemove", connect);
-
+    if (exportState == 2) return;
     connecting = !connecting;
     context[(connecting ? "resume" : "suspend")]();
     processor[(connecting ? "connect" : "disconnect")](context.destination);
@@ -84,8 +112,9 @@ const analyser = {
         this.element.addEventListener("click", this.handleClick.bind(this));
         this.modes = [
             null,
-            { func: this.spectrum, fftSize: 2048 },
-            { func: this.spectrum3d, fftSize: 2048 }
+            { size: 2 ** 11, func: this.spectrum },
+            { size: 2 ** 11, func: this.oscilloscope },
+            { size: 2 ** 11, func: this.spectrum3d }
         ];
     },
     init() {
@@ -96,7 +125,7 @@ const analyser = {
 
         let m = this.modes[this.modeNum];
         this.draw = m.func;
-        this.node.fftSize = m.fftSize;
+        this.node.fftSize = m.size;
         this.bufferSize = this.node.frequencyBinCount;
         this.buffer = new Uint8Array(this.bufferSize);
 
@@ -165,22 +194,57 @@ const analyser = {
         if (!this.isRunning) return;
         this.isRunning = false;
         this.canvasCtx.fillStyle = "white";
-        this.canvasCtx.fillText("analyser stopped", 0, 12)
+        this.canvasCtx.fillText("analyser stopped", 0, 12);
         cancelAnimationFrame(this.animId);
         this.draw = null;
     },
     setVu(data) {
         if (this.modeNum == 0) return;
+        let lr = ((-data.rmsLVal + data.rmsRVal) / (data.rmsLVal + data.rmsRVal)).toFixed(3);
+        if (lr >= 0) lr = "+" + lr;
         this.div.textContent = [
-            " Time: " + floor(data.time),
-            "PeakL: " + data.l.toFixed(3),
-            "PeakR: " + data.r.toFixed(3),
-            "  Max: " + data.max.toFixed(3),
+            "      Time: " + floor(data.time),
+            "     PeakL: " + data.l.toFixed(3),
+            "     PeakR: " + data.r.toFixed(3),
+            "   PeakMax: " + data.max.toFixed(3),
+            // "RMS L: " + data.rmsLVal.toFixed(3),
+            // "RMS R: " + data.rmsRVal.toFixed(3),
+            "LR balance:" + lr,
         ].join("\n");
     },
     loop() {
         this.draw(this.canvasCtx, this.bufferSize, this.width, this.height);
         this.animId = requestAnimationFrame(this.loop.bind(this));
+    },
+    oscilloscope(cc, bufferSize, w, h) {
+        cc.fillStyle = "mediumAquamarine";
+        cc.fillRect(0, 0, w, h);
+        cc.fillStyle = "#888";
+        cc.fillRect(0, 0.25 * h, w, 1);
+        cc.fillRect(0, 0.75 * h, w, 1);
+        this.node.getByteTimeDomainData(this.buffer);
+
+        cc.lineWidth = 1;
+        cc.fillStyle = "white";
+        cc.strokeStyle = "#444"
+        cc.beginPath();
+        cc.moveTo(w, h / 2);
+        cc.lineTo(0, h / 2);
+        let i = 1, l = bufferSize / 2;
+        for (; i < bufferSize; i++) {
+            let v = this.buffer[i];
+            if (v < this.buffer[i - 1] && v == 128) break;
+        }
+        if (i > bufferSize - l) i = 0;
+        for (let t = i, len = t + l; i < len; i++) {
+            let v = this.buffer[i] / 256 - 0.5;
+            let x = (i - t) / l * w;
+            let y = h / 2 + v * h;
+            cc.lineTo(x, y);
+        }
+        cc.lineTo(w, h / 2);
+        cc.stroke();
+        cc.fill();
     },
     spectrum3d(cc, bufferSize, w, h) {
         cc.fillStyle = "black";
@@ -192,15 +256,15 @@ const analyser = {
 
         this.spectrum3dList[this.ind3d] = new Uint8Array(this.buffer);
         let list = this.spectrum3dList;
-        let l = this.unknownLen;
+        let l = this.unknownLen, c = h / 256 * 0.05;
         for (let j = 0; j < l; j += 4) {
             let ind = this.ind3d + 1 - l + j;
             if (ind < 0) ind += l;
             if (!list[ind]) continue;
             cc.beginPath();
             let by = this.posList3dY[j];
-            cc.moveTo(this.posList3dX[0], by);
-            for (let i = 0, c = h / 256 * 0.05; i < bufferSize; i = floor((i + 1) * 1.1)) {
+            cc.moveTo(this.posList3dX[0] - 10, by - list[ind][0] * c);
+            for (let i = 1; i < bufferSize; i = floor((i + 1) * 1.1)) {
                 let y = by - list[ind][i] * c;
                 cc.lineTo(this.posList3dX[i], y);
             }
@@ -227,7 +291,7 @@ const analyser = {
             let y = h - this.buffer[i] * c;
             cc.lineTo(this.posList[i], y);
         }
-        cc.moveTo(w, h);
+        cc.lineTo(w + 1, h);
         cc.fill();
 
         cc.fillStyle = "#444";
@@ -242,25 +306,33 @@ const analyser = {
 
 async function setupWavCreator() {
     wavCreator = await new AudioWorkletNode(context, "wavCreator");
+    let recording = false;
+    wavCreator.record = _ => {
+        recording = !recording;
+        info.textContent = recording ? "recording..." : "creating wav";
+        wavCreator.port.postMessage("record");
+    }
+    wavCreator.export = _ => {
+        exportState = 1;
+        info.textContent = "wait...";
+        init().then(_ => {
+            exportState = 2;
+            wavCreator.port.postMessage(gV("export-sec"));
+        });
+    }
     wavCreator.port.onmessage = e => {
         let blob = new Blob([e.data], { type: "audio/wav" });
         let urlObj = URL.createObjectURL(blob);
         let a = document.createElement("a");
         a.href = urlObj;
-        a.textContent = "save wav. " + new Date().toLocaleString();
+        a.textContent = "save wav, " + new Date().toLocaleString();
         a.download = document.title + "----" + new Date().toLocaleString();
-        gE("wav-container").appendChild(a);
+        gE("wav-output").insertBefore(a, gE("wav-output").firstChild);
         info.textContent = "wav created";
-    }
-    let recording = false;
-    wavCreator.exec = _ => {
-        recording = !recording;
-        info.textContent = recording ? "recording..." : "creating wav";
-        wavCreator.port.postMessage(1);
+        exportState = 0;
     }
 }
 
-// 以下インタラクティブ用
 function setupParams() {
     gE("param-container").innerHTML = "";
     let setupMessenger = new AudioWorkletNode(context, "setup");
