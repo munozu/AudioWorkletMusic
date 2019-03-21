@@ -7,7 +7,23 @@ let info, paramContainers;
 let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, countInit = 0;
 let scoreNumList = [1], scoreNum = 0;
+let waveTables = {};
 
+function fetchWaveTable(url){
+    fetch(url)
+    .then(res=>res.arrayBuffer())
+    .then(buffer=>new Float32Array(buffer))
+    .then(array=>{
+        let sampleRate = array[0], harms = 1;
+        let output = waveTables[(url.split(".")[0])] = [];
+        for(let i=1, l=array.length; i<l; i+=sampleRate){
+            output[harms] = Array.from(array.slice(i,i+sampleRate));
+            harms *= 2;
+        }
+        output.sampleRate = sampleRate;
+        output.maxHarms = harms/2;
+    });
+}
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
@@ -19,6 +35,8 @@ window.addEventListener("load", async function setup() {
     }
     autoStart = new URLSearchParams(window.location.search).get("auto") != "false";
     analyser.setup();
+    await fetchWaveTable("saw32.dat");
+    await fetchWaveTable("tri32.dat");
     try { await init(); } catch (error) { info.textContent = error; return; }
     setupEvents();
 });
@@ -59,10 +77,10 @@ async function init() {
     }
 
 
+    await setupWorklet();
     await setupWavCreator();
     if (exportState == 1) return;
 
-    setupParams();
     gE("latency").value = context.baseLatency;
 
     if (countInit === 1) {
@@ -83,6 +101,42 @@ async function init() {
     else {
         connect();
         info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}.`;
+    }
+}
+
+async function setupWorklet() {
+    gE("param-container").innerHTML = "";
+    let setupMessenger = await new AudioWorkletNode(context, "setup");
+    setupMessenger.port.onmessage = e => createParameters(e.data);
+    setupMessenger.port.postMessage({waveTables});
+}
+
+async function setupWavCreator() {
+    wavCreator = await new AudioWorkletNode(context, "wavCreator");
+    let recording = false;
+    wavCreator.record = _ => {
+        recording = !recording;
+        info.textContent = recording ? "recording..." : "creating wav";
+        wavCreator.port.postMessage("record");
+    }
+    wavCreator.export = _ => {
+        exportState = 1;
+        info.textContent = "wait...";
+        init().then(_ => {
+            exportState = 2;
+            wavCreator.port.postMessage(gV("export-sec"));
+        });
+    }
+    wavCreator.port.onmessage = e => {
+        let blob = new Blob([e.data], { type: "audio/wav" });
+        let urlObj = URL.createObjectURL(blob);
+        let a = document.createElement("a");
+        a.href = urlObj;
+        a.textContent = "save wav, " + new Date().toLocaleString();
+        a.download = document.title + "----" + new Date().toLocaleString();
+        gE("wav-output").insertBefore(a, gE("wav-output").firstChild);
+        info.textContent = "wav created";
+        exportState = 0;
     }
 }
 
@@ -239,7 +293,7 @@ const analyser = {
         for (let t = i, len = t + l; i < len; i++) {
             let v = this.buffer[i] / 256 - 0.5;
             let x = (i - t) / l * w;
-            let y = h / 2 + v * h;
+            let y = h / 2 - v * h;
             cc.lineTo(x, y);
         }
         cc.lineTo(w, h / 2);
@@ -304,41 +358,7 @@ const analyser = {
     }
 }
 
-async function setupWavCreator() {
-    wavCreator = await new AudioWorkletNode(context, "wavCreator");
-    let recording = false;
-    wavCreator.record = _ => {
-        recording = !recording;
-        info.textContent = recording ? "recording..." : "creating wav";
-        wavCreator.port.postMessage("record");
-    }
-    wavCreator.export = _ => {
-        exportState = 1;
-        info.textContent = "wait...";
-        init().then(_ => {
-            exportState = 2;
-            wavCreator.port.postMessage(gV("export-sec"));
-        });
-    }
-    wavCreator.port.onmessage = e => {
-        let blob = new Blob([e.data], { type: "audio/wav" });
-        let urlObj = URL.createObjectURL(blob);
-        let a = document.createElement("a");
-        a.href = urlObj;
-        a.textContent = "save wav, " + new Date().toLocaleString();
-        a.download = document.title + "----" + new Date().toLocaleString();
-        gE("wav-output").insertBefore(a, gE("wav-output").firstChild);
-        info.textContent = "wav created";
-        exportState = 0;
-    }
-}
 
-function setupParams() {
-    gE("param-container").innerHTML = "";
-    let setupMessenger = new AudioWorkletNode(context, "setup");
-    setupMessenger.port.onmessage = e => createParameters(e.data);
-    setupMessenger.port.postMessage(1);
-}
 
 function createParameters(params) {
     for (let p of params) {

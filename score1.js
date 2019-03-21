@@ -1,5 +1,5 @@
 import * as wavModule from "/wav.js";
-import {SetTarget, Mixer, ParameterHandler, MasterAmp} from "/class.js";
+import { Mixer, ParameterHandler, MasterAmp} from "/class.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs;
 //math
@@ -8,7 +8,6 @@ const abs=Math.abs, acos=Math.acos, acosh=Math.acosh, asin=Math.asin, asinh=Math
 const twoPI = PI*2, halfPI = PI/2, quarterPI = PI/4, isArray = Array.isArray;
 const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
-
 
 // curve
 function cosI(x){return (1-cos(x*PI))/2;}// 偶関数
@@ -55,8 +54,8 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   ratioToDB=ratio=> 20*log10(ratio)
 ,   dBtoRatio=dB=> pow(10,(dB/20))
 ,   octave=function(hz,oct=0){return hz*pow(2,oct);}
-,   panR =function(x){return sin(quarterPI*(1+x));}
 ,   panL =function(x){return cos(quarterPI*(1+x));}
+,   panR =function(x){return sin(quarterPI*(1+x));}
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
@@ -75,7 +74,6 @@ class Processor extends AudioWorkletProcessor {
         let result = constParams.change(id, value, this);
         if(result)this.port.postMessage(result);
     }
-    
 }
 
 Processor.prototype.process = processFunc;
@@ -125,17 +123,19 @@ class WavCreator extends Processor {
     }
 }
 
+let masterAmp, recording=false, exporting=false, frame = Fs*0;
+let waveTables;
 function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    
     registerProcessor('processor', Processor);
     registerProcessor('wavCreator', WavCreator);
     registerProcessor('setup', class extends Processor {
         constructor() {
             super();
             let params = JSON.parse(JSON.stringify(parameters));
-            this.port.onmessage = function(){this.port.postMessage(params)}.bind(this);
+            this.port.onmessage = function(e){
+                waveTables = e.data.waveTables;
+                this.port.postMessage(params);
+            }.bind(this);
         }
     });
 }
@@ -143,7 +143,6 @@ function setup(){
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
-let masterAmp, recording=false, exporting=false, frame = Fs*0;
 const parameters = [
     { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     // { type: "separator", value: "parameters" },
@@ -151,10 +150,48 @@ const parameters = [
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
     // { name: 'param3', defaultValue: 0.01, minValue: 0.001, maxValue: 2, ramp: true, unit:"unit" },
 ]
+
+constParams.setup(parameters);
+masterAmp = new MasterAmp(constParams.masterAmp);
 setup();
 
+let baseList = [6,7.5,8,9,10,12,15,16,18,20,24,30];
+let hzList = baseList.map(v=>v*20);
+let lfoPMAmp = baseList.map(v=>v*0.017/Fs*twoPI);
+let lfo1 = baseList.map(v=>v*0.011/Fs*twoPI);
+let lfo2 = baseList.map(v=>8/v/Fs*twoPI);
+let lfo3 = baseList.map(v=>11/v/Fs*twoPI);
+let lfo4 = baseList.map(v=>0.01/v/Fs*twoPI);
+let lfoVibC = baseList.map(v=>2*sqrt(v)/Fs*twoPI);
+let lfoVibM = baseList.map(v=>v/100/Fs*twoPI);
+let startList = baseList.map(v=>sin(v*7)*twoPI);
+let phaserList  = baseList.map(v=>uni(sin(v*5)));
+let length = baseList.length;
+let phaseList = new Array(length).fill(0);
+let vibPhaseList = new Array(length).fill(0);
+let shapers = [tanh,s=>sineCurve(s),s=>s,s=>s*s*s];
+
+let vol = 0.45;
+
 let mixer = new Mixer();
+for(let i=0,l=baseList.length;i<l;i++){
+    let b = baseList[i];
+    mixer.setTrack( i, (b*6.55)%2-1, vol );
+}
+
 function process(L,R,i,fi){
-    let s = sin(fi*twoPI*400/Fs);
-    mixer.track(0,s,L,R,i)
+    for(let j=0;j<length;j++){
+        vibPhaseList[j] += lfoVibC[j] * ( 0.2 + uni( sin(fi*lfoVibM[j]) ) );
+        let vib = sin( vibPhaseList[j]  )*0.3/12;
+
+        phaseList[j] += octave(hzList[j], vib)*twoPI/Fs;
+        let mod = sin(phaseList[j]) *0.3 *uni( sin(fi*lfoPMAmp[j]) )
+        let s = lerp( sin(phaseList[j] + mod), sin(fi*hzList[j]*twoPI/Fs), phaserList[j] );
+        s *= uni( sin(fi*lfo1[j] -0.25*twoPI) );
+        s *= uni( sin(fi*lfo4[j] +startList[j]) );
+        s *= uni( sin(fi*lfo2[j]) );
+        s *= uni( sin(fi*lfo3[j]) );
+        s = shapers[j%4](s);
+        mixer.track(j,s,L,R,i);
+    }
 }
