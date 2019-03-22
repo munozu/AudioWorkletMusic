@@ -27,6 +27,22 @@ function get(source = wave, t=0){
     return output;
 }
 
+function exportWav(sec, processFunc){
+    let fadeoutSec = sec<10?0:sec<60?5:15;
+    let output = {l:[],r:[]};
+    let n = Date.now();
+    for(let i=0,l=Fs*parseInt(sec);i<l;i+=128){
+        let buffer = [[new Array(128).fill(0),new Array(128).fill(0)]];
+        processFunc(null,buffer);
+        for(let j=0;j<128;j++){
+            output.l.push( buffer[0][0][j] );
+            output.r.push( buffer[0][1][j] );
+        }
+    }
+    console.log(`export: ${sec}s, fadeout: ${fadeoutSec}s, ${(Date.now()-n)/1000}s elapsed`);
+    return get(output, fadeoutSec);
+}
+
 function createWav(trackL, trackR){
     function getMaxVol(...arg){
         let maxLR = [0,0], jLen = (!arg[1])?1:2;
@@ -123,4 +139,4 @@ function createWav(trackL, trackR){
     return createWavFormatArray(wave8Array);
 }
 
-export {record, get}
+export {record, exportWav, get}

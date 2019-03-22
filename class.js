@@ -5,6 +5,42 @@ const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const panR =function(x){return sin(quarterPI*(1+x));}, panL =function(x){return cos(quarterPI*(1+x));}
 
+class XorShift{
+    constructor(s = 0x87654321){this.u = new Uint32Array([s]);}
+    random(){
+        this.u[0] ^= this.u[0] <<  13;
+        this.u[0] ^= this.u[0] >>> 17;
+        this.u[0] ^= this.u[0] <<   5;
+        return this.u[0]/4294967296;
+    }
+}
+
+class PrimeNumber{
+    constructor(maxVal=10000){
+        let list = this.list = [2];
+        for(let i=3;i<maxVal;i++){
+            let isPrime = true, sqrtI = sqrt(i);
+            for(let j=0; list[j]<=sqrtI; j++){
+                let n = i/list[j];
+                if( floor(n) == n ){ isPrime=false; break;}
+            }
+            if(isPrime)list.push(i);
+        }
+        this.last = list[list.length-1];
+    }
+    isPrime(n){
+        return this.list.includes(n);
+    }
+    getNearPrime(n){
+        if(n>this.last)throw new Error("PrimeNumber");
+        n = floor(n);
+        while(!this.isPrime(n))n++;
+        return n;
+    }
+}
+const primeNumber = new PrimeNumber();
+
+
 class ParameterHandler{
     constructor(){
         this.descriptors = {};
@@ -130,8 +166,13 @@ class Mixer{
             trk.aux[i].amp = auxAmp[i];
         }
     }
-    setAux(n, func){
-        this.aux[n].func = func;
+    setAux(n, amp, pan, func){
+        let ax = this.aux[n];
+        ax.func = func;
+        ax.amp = amp;
+        ax.pan = pan;
+        ax.l = panL(pan)*ax.amp;
+        ax.r = panR(pan)*ax.amp;
     }
     track(n,s,L,R,i){
         let trk =this.tracks[n];
@@ -258,7 +299,6 @@ class PulseOsc extends WaveTableOsc{
     static create(table){let c=new PulseOsc(...arguments); return c.exec.bind(c);}
 }
 
-
 class Filter{
     constructor(fc=1000,type="lp",init=0){
         this.b1 = exp(-twoPI*fc/Fs);
@@ -291,7 +331,6 @@ class FilterBq{
     static create(fc,q,type,ini){let c=new FilterBq(...arguments); return c.exec.bind(c);}
 }
 
-
 class FeedbackDelay {
     constructor(sec = 0.3, feedGain = 0.7, bufSec = 1) {
         this.feedGain = feedGain;
@@ -309,15 +348,23 @@ class FeedbackDelay {
 }
 
 class ReverbSchroeder{
-    constructor(sec=2){
-        const g =t=> 10**(-3*t/sec);
-        const t1 = 0.03985, t2 = 0.03610, t3 = 0.03327, t4 = 0.03015;
-        this.comb1 = FeedbackDelay.create(t1, g(t1));
-        this.comb2 = FeedbackDelay.create(t2, g(t2));
-        this.comb3 = FeedbackDelay.create(t3, g(t3));
-        this.comb4 = FeedbackDelay.create(t4, g(t4));
-        this.all1 = this.AllpassDelay.create(0.00502, 0.7, 1, this);
-        this.all2 = this.AllpassDelay.create(0.00173, 0.7, 1, this);
+    constructor(sec=2,randFunc=Math){
+        let t = [], ts = [], g=[];
+        while(new Set(ts).size != 4){
+            for(let i=0;i<4;i++){
+                t[i] = 0.03+randFunc.random()*0.01;
+                g[i] = 10**(-3*t[i]/sec);
+                ts[i] = primeNumber.getNearPrime(t[i]*Fs);
+            }
+        }
+        console.log("ReverbSchroeder " + JSON.stringify({t,ts}));
+        
+        this.comb1 = this.FeedbackDelay.create(ts[0], g[0], 1, this);
+        this.comb2 = this.FeedbackDelay.create(ts[1], g[1], 1, this);
+        this.comb3 = this.FeedbackDelay.create(ts[2], g[2], 1, this);
+        this.comb4 = this.FeedbackDelay.create(ts[3], g[3], 1, this);
+        this.all1 = this.AllpassFilter.create(round(0.0050*Fs), 0.7, 1, this);
+        this.all2 = this.AllpassFilter.create(round(0.0017*Fs), 0.7, 1, this);
     }
     exec(s){
         let output = this.comb1(s) + this.comb2(s) + this.comb3(s) + this.comb4(s);
@@ -328,7 +375,15 @@ class ReverbSchroeder{
     static create(sec){let c=new ReverbSchroeder(sec);return c.exec.bind(c);}
 } // http://www.ari-web.com/service/soft/reverb-2.htm
 
-ReverbSchroeder.prototype.AllpassDelay = class extends FeedbackDelay {
+ReverbSchroeder.prototype.FeedbackDelay = class extends FeedbackDelay {
+    constructor(numSample, feedGain = 0.7, bufSec = 1){
+        super(0.3,feedGain,bufSec);
+        this.d = numSample;
+    }
+    static create(numSample, feedGain, bufSec, parent) { let d = new parent.FeedbackDelay(...arguments); return d.exec.bind(d); }
+}
+
+ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototype.FeedbackDelay {
     exec(s) {
         let pre = this.buffer[(this.t - this.d) % this.bLen];
         let ind = this.t % this.bLen;
@@ -336,6 +391,6 @@ ReverbSchroeder.prototype.AllpassDelay = class extends FeedbackDelay {
         this.t++;
         return pre -this.feedGain *this.buffer[ind];
     }
-    static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassDelay(...arguments); return c.exec.bind(c); }
+    static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
-export {ParameterHandler, Mixer, MasterAmp, SetTarget, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc}
+export {XorShift, ParameterHandler, Mixer, MasterAmp, SetTarget, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc}

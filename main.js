@@ -1,5 +1,6 @@
 
 Object.getOwnPropertyNames(Math).forEach(p => self[p] = Math[p]);
+Number.prototype.step = function (step = 0.5) { let c = 1 / step; return parseInt(this * c) / c; }
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const gE = id => { return document.getElementById(id) };
 const gV = id => { return parseFloat(gE(id).value) };
@@ -9,20 +10,20 @@ let connecting, exportState = 0, autoStart, countInit = 0;
 let scoreNumList = [1], scoreNum = 0;
 let waveTables = {};
 
-function fetchWaveTable(url){
+function fetchWaveTable(url) {
     fetch(url)
-    .then(res=>res.arrayBuffer())
-    .then(buffer=>new Float32Array(buffer))
-    .then(array=>{
-        let sampleRate = array[0], harms = 1;
-        let output = waveTables[(url.split(".")[0])] = [];
-        for(let i=1, l=array.length; i<l; i+=sampleRate){
-            output[harms] = Array.from(array.slice(i,i+sampleRate));
-            harms *= 2;
-        }
-        output.sampleRate = sampleRate;
-        output.maxHarms = harms/2;
-    });
+        .then(res => res.arrayBuffer())
+        .then(buffer => new Float32Array(buffer))
+        .then(array => {
+            let sampleRate = array[0], harms = 1;
+            let output = waveTables[(url.split(".")[0])] = [];
+            for (let i = 1, l = array.length; i < l; i += sampleRate) {
+                output[harms] = Array.from(array.slice(i, i + sampleRate));
+                harms *= 2;
+            }
+            output.sampleRate = sampleRate;
+            output.maxHarms = harms / 2;
+        });
 }
 window.addEventListener("load", async function setup() {
     info = gE("info");
@@ -108,7 +109,7 @@ async function setupWorklet() {
     gE("param-container").innerHTML = "";
     let setupMessenger = await new AudioWorkletNode(context, "setup");
     setupMessenger.port.onmessage = e => createParameters(e.data);
-    setupMessenger.port.postMessage({waveTables});
+    setupMessenger.port.postMessage({ waveTables });
 }
 
 async function setupWavCreator() {
@@ -133,7 +134,7 @@ async function setupWavCreator() {
         let a = document.createElement("a");
         a.href = urlObj;
         a.textContent = "save wav, " + new Date().toLocaleString();
-        a.download = document.title + "----" + new Date().toLocaleString();
+        a.download = document.title + scoreNum + "----" + new Date().toLocaleString();
         gE("wav-output").insertBefore(a, gE("wav-output").firstChild);
         info.textContent = "wav created";
         exportState = 0;
@@ -168,7 +169,7 @@ const analyser = {
             null,
             { size: 2 ** 11, func: this.spectrum },
             { size: 2 ** 11, func: this.oscilloscope },
-            { size: 2 ** 11, func: this.spectrum3d }
+            { size: 2 ** 10, func: this.spectrum3d }
         ];
     },
     init() {
@@ -318,11 +319,11 @@ const analyser = {
             cc.beginPath();
             let by = this.posList3dY[j];
             cc.moveTo(this.posList3dX[0] - 10, by - list[ind][0] * c);
-            for (let i = 1; i < bufferSize; i = floor((i + 1) * 1.1)) {
+            for (let i = 1; i < bufferSize; i = floor((i + 1) * 1)) {
                 let y = by - list[ind][i] * c;
                 cc.lineTo(this.posList3dX[i], y);
             }
-            cc.fill();
+            // cc.fill();
             cc.stroke();
         }
 
@@ -383,7 +384,7 @@ function createSlider(p) {
     let mi = p.minValue, ma = p.maxValue, range = ma - mi;
 
     let value = p.defaultValue;
-    divEl.step = (p.step ? p.step : 0.01);
+    if (p.step) divEl.step = p.step;
 
     let txt = p.name + (p.unit ? `(${p.unit})` : "");
     let textNode = document.createTextNode(" - " + txt);
@@ -419,6 +420,7 @@ function createSlider(p) {
         v = clamp((mouseX - m) / (divEl.clientWidth), 0, 1);
         divEl.style.backgroundImage = `linear-gradient(to right, orange , orange , ${v * 100}%, white, ${v * 100}%, white)`;
         v = mi + pow(v, exp) * range;
+        if (divEl.step) v = v.step(divEl.step);
         divEl.textContent = v.toFixed(3);
         return v;
     }
