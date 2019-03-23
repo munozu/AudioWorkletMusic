@@ -7,7 +7,7 @@ const gV = id => { return parseFloat(gE(id).value) };
 let info, paramContainers;
 let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, countInit = 0;
-let scoreNumList = [1], scoreNum = 0;
+let scoreNum = 0;
 let waveTables = {};
 
 function fetchWaveTable(url) {
@@ -28,13 +28,9 @@ function fetchWaveTable(url) {
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
-
-    for (let n of scoreNumList) {
-        let o = document.createElement("option");
-        o.textContent = n;
-        gE("select-score").appendChild(o);
-    }
-    autoStart = new URLSearchParams(window.location.search).get("auto") != "false";
+    let search = new URLSearchParams(window.location.search);
+    autoStart = search.get("auto") != "false";
+    if(search.get("score")!==null)scoreNum = search.get("score")
     analyser.setup();
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");

@@ -127,7 +127,11 @@ function setup(){
 
 let frame = Fs*0;
 const parameters = [
-        { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'reverbSeed', defaultValue: 1, minValue: 1, maxValue: 100, step:1, callback: initReverb  },
+    { name: 'reverbTime', defaultValue: 7, minValue: 0.1, maxValue:20, callback: initReverb },
+    { name: 'reverbIn', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbIn.setValue(v)  },
+    { name: 'reverbOut', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbOut.setValue(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     // { type: "separator", value: "parameters" },
     // { name: 'param1', defaultValue: 1, minValue: 1, maxValue: 10, type: "number", step:1 },
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
@@ -139,107 +143,91 @@ setup();
 let mixer = new Mixer(64,1);
 let reverb1, reverb2;
 function initReverb(){
-    let xorS = new XorShift(17)
-    reverb1 = ReverbSchroeder.create(5,xorS);
-    reverb2 = ReverbSchroeder.create(5,xorS);
+    let xorS = new XorShift(constParams.reverbSeed)
+    reverb1 = ReverbSchroeder.create(constParams.reverbTime,xorS);
+    reverb2 = ReverbSchroeder.create(constParams.reverbTime,xorS);
 }
 initReverb();
-mixer.setAux(0,0.5,0,function rvbFunc(inL,inR,L,R,i){;
-    L[i] += reverb1(inL)
-    R[i] += reverb2(inR)
+let stReverbIn = new SetTarget(0.5,0.1);
+let stReverbOut = new SetTarget(0.5,0.1);
+mixer.setAux(0,2,0,function rvbFunc(inL,inR,L,R,i){;
+    let reverbIn = stReverbIn.exec();
+    let reverbOut = stReverbOut.exec();
+    L[i] += reverb2(inL*reverbIn) * reverbOut;
+    R[i] += reverb1(inR*reverbIn) * reverbOut;
 });
 
-let numTrack = 8;
+let numTrack = 7;
+let oscMixMod = []
+let adsrList = [];
+let filterAdsr = [];
+let filterList = [];
+let filterTop = new Array(numTrack).fill(1000);
+let lp = []
+let pwmHz = [];
+let pwmHzFM = [];
+let pwmPhase = new Array(numTrack).fill(0);
+let hzList = new Array(numTrack).fill(400);
+
 for(let i=0;i<numTrack;i++){
-    mixer.setTrack(i, panDivide(i,7,0.9), 0.6, rand(0.2));
+    adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
+    filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
+    
+    filterList[i] = FilterBq.create(400,0.9);
+    lp[i] = Filter.create(1);
+    pwmHz[i] = rand(1,2);
+    pwmHzFM[i] = rand(0.1,0.2);
+    oscMixMod[i] = rand(0.01,0.05);
+    mixer.setTrack(i, panDivide(i,7,0.9), 0.6, 0.3);
 }
 
+let osc1List = [], osc2List = [];
+postSetup=_=>{
+    for(let i=numTrack;i--;){
+        osc1List.push( PulseOsc.create(waveTables.saw32) );
+        osc2List.push( PulseOsc.create(waveTables.tri32) );
+    }
+}
 
 let scale = [];
 for(let i=0,a=[8,9,10,12,14];i<5;i++){
     for(let n of a)scale.push(12.5*n *2**i);
 }
 
-function expAD(t,a=1,d=1){ return pow(t/a, (a-t)/d); }
-let list = [];
-let minVol = 1/(2**16*0.5);
-
-function addNote(){
-    let a = 0.1+rand()**3 *2;
-    let d = rand(0.1,a*4);
-    let ma = rand(0.1,1);
-    let md = rand(0.03,1);
-    // console.log(d);
-    
-    // let hz = randChoice([500,600,750,800,900])/4*2**randInt(3);
-    let hz = randChoice([500,500,600,750,900])/4*2**randInt(3);
-    hz = octave(hz,noise()*0.5/1200);
-    let obj = {
-        t:0,
-        isOver: false,
-        trk: randInt(numTrack-1),
-        osc1: PulseOsc.create(waveTables.tri32),
-        vel: rand()*exp(-(hz-100)/1300),
-        hz,
-        ringLv: exp(-(hz-100)/1000) *0.7,
-        a, d, ma, md,
-        pwmHz: rand(3)*twoPIoFs
-    }
-    list.push(obj);
-
-    if(list.length>16)return;
-    if(a>0.3)return;
-    if(coin(0.3))initDelay();
-    for(let i=1,l=randInt(7);i<l;i++){
-        let t = dTime?(i*dTime)**dTimeExp:rand(0.5);
-        addDelay(obj,t, dGain**i,panFunc())
-    }
+function randOn(){
+    let n = randInt(numTrack-1);
+    // n = 3
+    let ad = rand(0.4,2) * exp(-hzList[n]/3200);
+    // ad = 0.1
+    adsrList[n].setA(ad);
+    adsrList[n].setD(ad);
+    filterAdsr[n].setA(ad);
+    filterAdsr[n].setD(ad);
+    let r = cosINeg( random() , 0.5);
+    hzList[n] = scale[floor(r * scale.length)];
+    let vol = rand(0.1,1) *  exp(-hzList[n]/1000);
+    vol= exp(-hzList[n]/1000)
+    adsrList[n].noteOn(vol);
+    filterAdsr[n].noteOn();
+    filterTop[n] = sqrt(hzList[n]/3200)*3200;
+    // filterTop[n] = 8000
 }
-let dTime, dTimeExp, dGain, panFunc;
-function initDelay(){
-    dTime = randChoice([0,0.2,0.6]);
-    dTimeExp = randChoice([0.5,1.1,2])
-    dGain = rand(0.7,1);
-    panFunc =randChoice([returnNull,randomPanTrk])
-}
-initDelay()
-
-function addDelay(obj,t,vol,trk){
-    let delayed = Object.assign({},obj);
-    if(trk)delayed.trk = trk;
-    delayed.t = -t;
-    delayed.vel *=vol
-    delayed.osc1 = PulseOsc.create(waveTables.tri32);
-    list.push(delayed);
-}
-function returnNull(){return null}
-function randomPanTrk(){return randInt(numTrack-1)}
-function cLog(obj){console.log(JSON.stringify(obj))} 
-postSetup=_=>{
-    addNote();
-}
+randOn();
 
 function process(L,R,bufferI,fi){
-    if(fi%Fs==0){
-        for(let obj of list){
-            if(obj.t>1 && obj.cAmp < minVol )obj.isOver = true;
-         }
-        list = list.filter(v=>{if(!v.isOver)return v});
-        console.log(list.length)
+    fi+=Fs*100;
+    if(coin(0.6/Fs))randOn();
+    if(coin(0.5/Fs))adsrList[randInt(numTrack-1)].noteOff();
+
+    for(let i=0; i<numTrack; i++){
+        pwmPhase[i] += (pwmHz[i]+sin(fi*pwmHzFM[i]*twoPIoFs)*1 ) *twoPIoFs;
+        let pwm = sin(pwmPhase[i]);
+        let s1 = osc1List[i](hzList[i],  0.25+pwm*0.10);
+        let s2 = osc2List[i](hzList[i]/2,0.25+pwm*0.00);
+        let s = lerp(s1,s2,uni(sin(fi*oscMixMod[i]*twoPIoFs)));
+        s  = filterList[i](s, 20+lp[i](filterTop[i])*filterAdsr[i].exec() );
+        s *= adsrList[i].exec();
+        mixer.track(i,s,L,R,bufferI);
     }
-    if(coin(0.7/Fs))addNote();
-    for(let i=0, l= list.length;i<l;i++){
-        let obj = list[i];
-        obj.t += Ts;
-        if(obj.t<0)continue;
-        let s = obj.osc1(obj.hz,0.25+min(obj.t/100,0.1)*sin(fi*obj.pwmHz))
-        
-        let ringLv = expAD(obj.t,obj.ma,obj.md) *obj.ringLv;
-        s = lerp(s,s*sin(14/3*fi*obj.hz*twoPIoFs),ringLv)
-        obj.cAmp = expAD(obj.t,obj.a,obj.d) *obj.vel;
-        s = s * obj.cAmp ;
-        mixer.track(obj.trk,s,L,R,bufferI);
-        // mixer.track(3,s,L,R,bufferI);
-    }
-    mixer.outputAux(L,R,bufferI)
+    mixer.outputAux(L,R,bufferI);
 }

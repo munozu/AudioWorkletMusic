@@ -15,30 +15,29 @@ class XorShift{
     }
 }
 
-class PrimeNumber{
+const PrimeNumber = new class{
     constructor(maxVal=10000){
-        let list = this.list = [2];
+        let list = this.list = [2], binaryArray = this.binaryArray = [0,0,1];
         for(let i=3;i<maxVal;i++){
-            let isPrime = true, sqrtI = sqrt(i);
+            let bin = 1, sqrtI = sqrt(i);
             for(let j=0; list[j]<=sqrtI; j++){
                 let n = i/list[j];
-                if( floor(n) == n ){ isPrime=false; break;}
+                if( floor(n) == n ){ bin=0; break;}
             }
-            if(isPrime)list.push(i);
+            if(bin)list.push(i);
+            binaryArray.push(bin);
         }
-        this.last = list[list.length-1];
     }
     isPrime(n){
-        return this.list.includes(n);
+        return this.binaryArray[n];
     }
     getNearPrime(n){
-        if(n>this.last)throw new Error("PrimeNumber");
         n = floor(n);
-        while(!this.isPrime(n))n++;
+        if(n>this.list[this.list.length-1])throw new Error("PrimeNumber");
+        while(!this.binaryArray[n])n++;
         return n;
     }
 }
-const primeNumber = new PrimeNumber();
 
 
 class ParameterHandler{
@@ -354,10 +353,10 @@ class ReverbSchroeder{
             for(let i=0;i<4;i++){
                 t[i] = 0.03+randFunc.random()*0.01;
                 g[i] = 10**(-3*t[i]/sec);
-                ts[i] = primeNumber.getNearPrime(t[i]*Fs);
+                ts[i] = PrimeNumber.getNearPrime(t[i]*Fs);
             }
         }
-        console.log("ReverbSchroeder " + JSON.stringify({t,ts}));
+        console.log("ReverbSchroeder " + JSON.stringify({t,ts,sum:ts.reduce((acc,a)=>acc+a)}));
         
         this.comb1 = this.FeedbackDelay.create(ts[0], g[0], 1, this);
         this.comb2 = this.FeedbackDelay.create(ts[1], g[1], 1, this);
@@ -372,7 +371,7 @@ class ReverbSchroeder{
         output = this.all2(output);
         return  output;
     }
-    static create(sec){let c=new ReverbSchroeder(sec);return c.exec.bind(c);}
+    static create(sec,randFunc){let c=new ReverbSchroeder(...arguments);return c.exec.bind(c);}
 } // http://www.ari-web.com/service/soft/reverb-2.htm
 
 ReverbSchroeder.prototype.FeedbackDelay = class extends FeedbackDelay {
