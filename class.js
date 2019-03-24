@@ -135,7 +135,6 @@ class SetTarget {
     }
 }
 
-
 class Mixer{
     constructor(numTracks=64, numAux=0){
         this.tracks = [];
@@ -149,8 +148,8 @@ class Mixer{
         for(let i=0;i<numAux;i++){
             this.aux.push({
                 amp:1, pan:0, l:panL(0), r:panR(0),
-                bufferL: new Array(128).fill(0),
-                bufferR: new Array(128).fill(0),
+                bufferL: 0,
+                bufferR: 0,
                 func: null,
             });
         }
@@ -180,15 +179,15 @@ class Mixer{
         L[i] += outL;
         R[i] += outR;
         for(let j=0,l = this.numAux; j<l; j++){
-            this.aux[j].bufferL[i] += outL * trk.aux[j].amp;
-            this.aux[j].bufferR[i] += outR * trk.aux[j].amp;
+            this.aux[j].bufferL += outL * trk.aux[j].amp;
+            this.aux[j].bufferR += outR * trk.aux[j].amp;
         }
     }
     outputAux(L,R,i){
         for(let j=0,len = this.aux.length; j<len; j++){
             let ax = this.aux[j];
-            ax.func(ax.bufferL[i] *ax.l, ax.bufferR[i] *ax.r, L, R, i);
-            ax.bufferL[i] = ax.bufferR[i] = 0;
+            ax.func(ax.bufferL *ax.l, ax.bufferR *ax.r, L, R, i);
+            ax.bufferL = ax.bufferR = 0;
         }
     }
 }

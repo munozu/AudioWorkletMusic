@@ -1,13 +1,13 @@
-
 Object.getOwnPropertyNames(Math).forEach(p => self[p] = Math[p]);
 Number.prototype.step = function (step = 0.5) { let c = 1 / step; return parseInt(this * c) / c; }
+Number.prototype.roundStep = function (step = 0.5) { let c = 1 / step; return round(this * c) / c; }
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const gE = id => { return document.getElementById(id) };
 const gV = id => { return parseFloat(gE(id).value) };
 let info, paramContainers;
 let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, countInit = 0;
-let scoreNum = 0;
+let scoreNum = 2;
 let waveTables = {};
 
 function fetchWaveTable(url) {
@@ -28,9 +28,15 @@ function fetchWaveTable(url) {
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
+
     let search = new URLSearchParams(window.location.search);
     autoStart = search.get("auto") != "false";
-    if(search.get("score")!==null)scoreNum = search.get("score")
+    if (search.get("score") !== null) {
+        scoreNum = search.get("score");
+    }
+    for (let o of gE("select-score").children) {
+        if (o.textContent == scoreNum) o.selected = true;
+    }
     analyser.setup();
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");
@@ -362,7 +368,7 @@ function createParameters(params) {
         if (p.type == "none") continue;
         if (p.type == null) p.type = "slider";
         if (p.type == "separator") {
-            let el = document.createElement("h3");
+            let el = document.createElement("h4");
             el.textContent = p.value;
             paramContainers.appendChild(el);
         }
@@ -390,9 +396,10 @@ function createSlider(p) {
 
     setValue(value);
     function setValue(value) {
-        let v = (value / range) ** (1 / exp) * 100;
+        let v = ((value - mi) / range) ** (1 / exp) * 100;
         divEl.style.backgroundImage = `linear-gradient(to right, orange , orange , ${v}%, white, ${v}%, white)`;
         divEl.textContent = value.toFixed(3);
+        divEl.preValue = value;
     }
     Object.defineProperty(divEl, 'value', { set: setValue });
 
@@ -402,11 +409,13 @@ function createSlider(p) {
         mouseX = e.clientX - rect.left;
         document.addEventListener("mousemove", moveHandler);
         document.addEventListener("mouseup", upHandler);
-        sendValue(getValue());
+        let v = getValue();
+        if (v !== null) sendValue(v);
     });
     function moveHandler(e) {
         mouseX += e.movementX;
-        sendValue(getValue());
+        let v = getValue();
+        if (v !== null) sendValue(v);
     }
     function upHandler() {
         document.removeEventListener("mousemove", moveHandler);
@@ -414,9 +423,12 @@ function createSlider(p) {
     }
     function getValue(v) {
         v = clamp((mouseX - m) / (divEl.clientWidth), 0, 1);
-        divEl.style.backgroundImage = `linear-gradient(to right, orange , orange , ${v * 100}%, white, ${v * 100}%, white)`;
         v = mi + pow(v, exp) * range;
-        if (divEl.step) v = v.step(divEl.step);
+        if (divEl.step) v = v.roundStep(divEl.step);
+        if (v == divEl.preValue) return null;
+        setValue(v)
+        // divEl.style.backgroundImage = `linear-gradient(to right, orange , orange , ${v * 100}%, white, ${v * 100}%, white)`;
+        divEl.preValue = v;
         divEl.textContent = v.toFixed(3);
         return v;
     }
