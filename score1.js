@@ -1,7 +1,10 @@
 import * as wavModule from "/wav.js";
-import { XorShift, Mixer, ParameterHandler, MasterAmp, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc} from "/class.js";
+import { XorShift, SetTarget, Mixer, ParameterHandler, MasterAmp, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc} from "/class.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
+function cLog(obj){console.log(JSON.stringify(obj))} 
+function doNothing(arg){return arg}
+
 //math
 //Object.getOwnPropertyNames(Math).forEach(p=>self[p]=Math[p]);
 const abs=Math.abs, acos=Math.acos, acosh=Math.acosh, asin=Math.asin, asinh=Math.asinh, atan=Math.atan, atanh=Math.atanh, atan2=Math.atan2, ceil=Math.ceil, cbrt=Math.cbrt, expm1=Math.expm1, clz32=Math.clz32, cos=Math.cos, cosh=Math.cosh, exp=Math.exp, floor=Math.floor, fround=Math.fround, hypot=Math.hypot, imul=Math.imul, log=Math.log, log1p=Math.log1p, log2=Math.log2, log10=Math.log10, max=Math.max, min=Math.min, pow=Math.pow, random=Math.random, round=Math.round, sign=Math.sign, sin=Math.sin, sinh=Math.sinh, sqrt=Math.sqrt, tan=Math.tan, tanh=Math.tanh, trunc=Math.trunc, E=Math.E, LN10=Math.LN10, LN2=Math.LN2, LOG10E=Math.LOG10E, LOG2E=Math.LOG2E, PI=Math.PI, SQRT1_2=Math.SQRT1_2, SQRT2=Math.SQRT2;
@@ -48,7 +51,9 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   octave=function(hz,oct=0){return hz*pow(2,oct);}
 ,   panL =function(x){return cos(quarterPI*(1+x));}
 ,   panR =function(x){return sin(quarterPI*(1+x));}
-const panScatter=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
+
+const panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
+
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
@@ -68,20 +73,22 @@ class Processor extends AudioWorkletProcessor {
         if(result)this.port.postMessage(result);
     }
 }
-
 Processor.prototype.process = processWrapper;
 
 class WavCreator extends Processor {
     constructor() {
         super();
         this.port.onmessage = function(e){
-            if(e.data=="record"){
-                recording = !recording;
-                if(!recording)this.port.postMessage(wavModule.get());
+            try {
+                if(e.data=="record"){
+                    recording = !recording;
+                    if(!recording)this.port.postMessage(wavModule.get());
+                }
+                else this.export(e.data);
+            } catch (error) {
+                this.port.postMessage("Wav Creator Error");
             }
-            else this.export(e.data);
         }.bind(this);
-
     }
     export(sec){
         exporting = true;
@@ -94,10 +101,11 @@ function processWrapper (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
     const bufferLen = L.length;
+    kRateProcess(frame,bufferLen);
     
     for(let i=0; i<bufferLen; i++){
         const fi = frame + i; 
-        process(L,R,i,fi);
+        process(L,R,i,fi,this);
     }
     if(recording){ for(let i=0; i<bufferLen; i++)wavModule.record(L[i],R[i]); }
     if(!exporting){ for(let i=0; i<bufferLen; i++)masterAmp.exec(L,R,i,frame+i,this,constParams) };
@@ -126,6 +134,8 @@ function setup(){
 
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
+function kRateProcess(bufferI,bufferLen){
+}
 
 let frame = Fs*0;
 const parameters = [

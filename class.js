@@ -39,7 +39,6 @@ const PrimeNumber = new class{
     }
 }
 
-
 class ParameterHandler{
     constructor(){
         this.descriptors = {};
@@ -116,25 +115,6 @@ class MasterAmp{
     }
 };
 
-class SetTarget {
-    constructor(iniValue = 0, tc = 0.01, iniTargetValue = iniValue) {
-        this.v0 = this.gain = iniValue;
-        this.v1 = iniTargetValue;
-        this.t = 0;
-        this.setTC(tc);
-    }
-    setTC(v) { this.TC = v * Fs; }
-    setValue(targetValue) {
-        this.v0 = this.gain;
-        this.v1 = targetValue;
-        this.t = 0;
-    }
-    exec() {
-        this.gain = this.v1 + (this.v0 - this.v1) * exp(-(this.t++ / this.TC));
-        return this.gain;
-    }
-}
-
 class Mixer{
     constructor(numTracks=64, numAux=0){
         this.tracks = [];
@@ -190,6 +170,36 @@ class Mixer{
             ax.bufferL = ax.bufferR = 0;
         }
     }
+}
+
+class SetTarget {
+    constructor(iniValue = 0, tc = 0.01, iniTargetValue = iniValue) {
+        this.v0 = this.gain = iniValue;
+        this.v1 = iniTargetValue;
+        this.t = 0;
+        this.setTC(tc);
+    }
+    setTC(v) { this.TC = v * Fs; }
+    setValue(targetValue) {
+        this.v0 = this.gain;
+        this.v1 = targetValue;
+        this.t = 0;
+    }
+    exec() {
+        this.gain = this.v1 + (this.v0 - this.v1) * exp(-(this.t++ / this.TC));
+        return this.gain;
+    }
+}
+
+class EnvelopeQuadratic{
+    constructor(sec=2){
+        this.a = 4/sec/sec;
+        this.halfT =sec/2;
+        this.t = 0;
+    }
+    exec(t){  return max(0, 1-this.a*pow(t-this.halfT, 2));  }
+    oneUseFunc(){ this.t+=Ts; return max(0, 1-this.a*pow(this.t-this.halfT, 2)); }
+    static createOneUseInstance(sec){let c=new EnvelopeQuadratic(...arguments); return c.oneUseFunc.bind(c);}
 }
 
 class ADSR {// multi trigger, linear
@@ -391,4 +401,4 @@ ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototyp
     }
     static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
-export {XorShift, ParameterHandler, Mixer, MasterAmp, SetTarget, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc}
+export {XorShift, ParameterHandler, Mixer, MasterAmp, SetTarget, EnvelopeQuadratic, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc}

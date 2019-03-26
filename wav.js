@@ -28,7 +28,7 @@ function get(source = wave, t=0){
 }
 
 function exportWav(sec, processFunc){
-    let fadeoutSec = sec<10?0:sec<60?5:15;
+    let fadeoutSec = sec/10;
     let output = {l:[],r:[]};
     let n = Date.now();
     for(let i=0,l=Fs*parseInt(sec);i<l;i+=128){
