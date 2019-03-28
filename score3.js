@@ -164,12 +164,12 @@ setup();
 let numTracks = 8;
 let mixer = new Mixer(numTracks,1);
 for(let i=0;i<numTracks;i++){
-    mixer.tracks[i].setup( panDivide(i,numTracks,0.9), 0.5, null, 0.05 +abs( panDivide(i,numTracks,0.3) ) );
+    mixer.tracks[i].setup( panDivide(i,numTracks,0.9), 0.5, null, 0.1 +abs( panDivide(i,numTracks,0.9) ) );
 }
 let xorS = new XorShift(17);
 let reverb1 = ReverbSchroeder.create(5,xorS);
 let reverb2 = ReverbSchroeder.create(5,xorS);
-mixer.aux[0].setup(0,0.15,function rvbFunc(inL,inR,output){;
+mixer.aux[0].setup(0,dBtoRatio(-32),function rvbFunc(inL,inR,output){
     output[0] = reverb1(inL)
     output[1] = reverb2(inR)
 })

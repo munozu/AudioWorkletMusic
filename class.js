@@ -133,8 +133,10 @@ class Mixer{
     }
     output(L,R,i){
         for(let i=0;i<this.numTracks;i++){
+            let trk = this.tracks[i];
+            if(trk.effect)trk.execEffect();
             for(let j=0;j<this.numAux;j++){
-                this.tracks[i].send(j,this.aux[j]);
+                trk.send(j,this.aux[j]);
             }
         }
         for(let j=0; j<this.numTracksAll; j++){
@@ -156,7 +158,7 @@ Mixer.prototype.Track = class Track{
         this.numSends = numSends;
         this.effect = null;
         for(let i=0; i<numSends;i++){
-            this.sends[i] = {amp:0.2}
+            this.sends[i] = {amp:1}
         }
     }
     setup(pan=0,amp=1,effectFunc=null, ...auxAmp){
@@ -186,7 +188,6 @@ Mixer.prototype.Track = class Track{
         let trk = this;
         trk.bufferL *= trk.lAmp;
         trk.bufferR *= trk.rAmp;
-        if(trk.effect)trk.execEffect();
         L[i] += trk.bufferL;
         R[i] += trk.bufferR;
         trk.bufferL = trk.bufferR = 0;
@@ -315,8 +316,16 @@ class WaveTableOsc{
             this.exec = this.fixed;
         }
     }
-    exec(hz){
-        let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);// TODO:整数マップを作ってパフォーマンス比較
+    exec(phase,hz){
+        let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
+        let source = this.waveTable[num];
+        let ind = (phase - floor(phase)) * this.sampleRate;
+        let x1 = floor(ind), x2 = x1+1, amt = ind-x1;
+        let s = lerp(source[x1],source[x2],amt);
+        return s;
+    }
+    oneUse(hz){
+        let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
         let source = this.waveTable[num];
         this.acc += hz/Fs;
         let ind = (this.acc * this.sampleRate) % this.sampleRate;
@@ -332,7 +341,7 @@ class WaveTableOsc{
         let s = lerp(source[x1],source[x2],amt);
         return s;
     }
-    static create(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.exec.bind(c);}
+    static create(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.oneUse.bind(c);}
 }
 
 class PulseOsc extends WaveTableOsc{

@@ -21,6 +21,7 @@ let waveTables = {};
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
+    if(!local)gE("record").style.display = "none";
     for (let i = 1, selectEl = gE("select-score"); i <= numScores; i++) {
         let optEl = document.createElement("option");
         optEl.textContent = i;

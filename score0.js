@@ -156,8 +156,27 @@ const parameters = [
 
 setup();
 
+// mixer //////////////////////////////////////////////
 let numTracks = 5;
 let mixer = new Mixer(numTracks,1);
+{
+    let delFilterL = Filter.create(3000)
+    let delFilterR = Filter.create(3000)
+    let delL = Delay.create(4,0.7, 1,delFilterL);
+    let delR = Delay.create(2,0.0, 1,delFilterR);
+    function delaySt(inL,inR,output){
+        output[0] = inL *0.5;
+        output[1] = inR *0.5;
+        let wetL = delL((inL+inR)/2) * 0.5;
+        output[0] += wetL
+        output[1] += +delR(wetL);
+    }
+    mixer.tracks[2].setup(
+        panDivide(2,numTracks,0.9),
+        0.5,
+        delaySt
+    );
+}
 let xorS = new XorShift(25)
 let reverb1 = ReverbSchroeder.create(5,xorS);
 let reverb2 = ReverbSchroeder.create(5,xorS);
@@ -165,27 +184,10 @@ function rvbFunc(inL,inR,output){
     output[0] = reverb1(inL);
     output[1] = reverb2(inR);
 }
-mixer.aux[0].setup(0,0.5,rvbFunc);
-
-for(let i=0;i<numTracks;i++){
-    let delFilterL = Filter.create(3000)
-    let delFilterR = Filter.create(3000)
-    let delL = Delay.create(1,0.7,0.5,delFilterL);
-    let delR = Delay.create(1,0.7,0.5,delFilterR);
-    function delaySt(inL,inR,output){
-        output[0] = delL(inL);
-        output[1] = delR(inR);
-    }
-    mixer.tracks[i].setup(
-        panDivide(i,numTracks,0.9),
-        0.5,
-        delaySt,
-        0.2
-    );
-    // console.log(delaySt)
-}
+mixer.aux[0].setup(0,dBtoRatio(-12),rvbFunc);
 
 
+// setup //////////////////////////////////////////////
 const fade  =(x, sec=0.01, sec2=sec)=>{
     for(let i=0, c=round(sec *Fs); i<c; i++)x[i]*=i/c;
     for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=i/c;
@@ -205,23 +207,24 @@ let sampleBaseHz = 400;
         noiseSample.push(s)
     }
     fade(noiseSample,0.01)
-} // create sample
+} // sample creation
 
 let sampler = Sampler.createOneUseInstance(noiseSample,sampleBaseHz);
-let scale = [];
+let scale = [], mainScale = [];
 for(let i=-2;i<=-1;i++){
-    for(let o of [8,8,9,10,12,12,15,16])scale.push(o*100*2**i);
+    // for(let o of [8,8,9,10,12,12,15,16])scale.push(o*100*2**i);
+    for(let o of [8,8,8,8,9,10,10,11,12,12,12,13,14,14,15])scale.push(o*100*2**i);
+    for(let o of [8,9,10,12,15])mainScale.push(o*100*2**i);
 }
 
 let noteHz = scale[0];
 let noteLp = Filter.create(1,"lp",noteHz)
 let noteN = 0;
 let nextTime = 2;
-// let osc = Oscillator.create(400)
 let osc1;
 
 function postSetup(){
-    osc1 = PulseOsc.create(waveTables.tri32);
+    osc1 = new WaveTableOsc(waveTables.tri32);
     adsr.noteOn();
 }
 
@@ -229,6 +232,8 @@ let adsr = new ADSR(1,1,0.3,1);
 let nLfo1 = NoiseLFO.create(5,cosI,random);
 let nLfo2 = NoiseLFO.create(1,cosI,noise);
 let noteOffReservationState = 2;// 0:on, 1:off reserved, 2:off
+
+// process //////////////////////////////////////////////
 function kRateProcess(frame,bufferLen){
     if(nextTime<frame*Ts){
         if(noteOffReservationState==1){
@@ -242,22 +247,38 @@ function kRateProcess(frame,bufferLen){
             nextTime += rand(1,4);
         }
         else{
-            noteN += randInt(-5,5);
-            noteN = clamp(noteN,0,scale.length-1);
+            let tempN = noteN;
+            while(tempN==noteN){
+                tempN += randInt(-5,5);
+                tempN = clamp(tempN,0,scale.length-1);
+            }
+            noteN = tempN;
             noteHz = scale[noteN];
             adsr.noteOn();
             noteOffReservationState = 0;
-            nextTime += coin()?1.5:rand(0.1,1);
+            if(mainScale.includes(noteHz))nextTime += rand(1,1.5);
+            else nextTime += rand(0.1,0.3);
+            // nextTime += coin()?1.5:rand(0.1,1);
         }
-    }
-    
+    }   
 }
+
+function waveShaperCubic(s,k=0.5){
+    let area = (1+k)/2 - k/4;
+    let amp = 0.5/area;
+    return ((1+k)*s - k*s*s*s) *amp;
+}
+let accOsc1 = 0,  accOsc1Mod = 0;
 function process(L,R,bufferI,fi,processor){
     let hz = ( noteLp(noteHz) );
     let hzMod = octave(hz,nLfo2()*0.3/12);
     let amp = adsr.exec();
-    let s1 = osc1( hz/2 ) *amp
-    let s2 = sampler(hzMod) *amp * nLfo1()
+    accOsc1 += hz/Fs;
+    accOsc1Mod += hz*twoPIoFs/2;
+    let s1 = osc1.exec(accOsc1 +sin(accOsc1Mod)*0.3, hz)
+    s1 = waveShaperCubic(s1,amp);
+    s1 *= amp;
+    let s2 = sampler(hzMod) *amp * nLfo1();
     let s = lerp(s1,s2,0.7)
     mixer.tracks[2].input1ch(s)
     mixer.output(L,R,bufferI)

@@ -147,11 +147,11 @@ function postSetup(){}
 
 let frame = Fs*0;
 const parameters = [
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     { name: 'reverbSeed', defaultValue: 1, minValue: 1, maxValue: 100, step:1, callback: initReverb  },
     { name: 'reverbTime', defaultValue: 7, minValue: 0.1, maxValue:20, callback: initReverb },
     { name: 'reverbIn', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbIn.setValue(v)  },
     { name: 'reverbOut', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbOut.setValue(v) },
-    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     // { type: "separator", value: "parameters" },
     // { name: 'param1', defaultValue: 1, minValue: 1, maxValue: 10, type: "number", step:1 },
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
@@ -160,7 +160,8 @@ const parameters = [
 
 setup();
 
-let numTracks = 7;
+// mixer //////////////////////////////////////////////
+let numTracks = 6;
 let mixer = new Mixer(numTracks,1);
 let reverb1, reverb2;
 function initReverb(){
@@ -171,13 +172,17 @@ function initReverb(){
 initReverb();
 let stReverbIn = new SetTarget(0.5,0.1);
 let stReverbOut = new SetTarget(0.5,0.1);
-mixer.aux[0].setup(0,1,function rvbFunc(inL,inR,output){;
+mixer.aux[0].setup(0,dBtoRatio(-28)*4,function rvbFunc(inL,inR,output){;
     let reverbIn = stReverbIn.exec();
     let reverbOut = stReverbOut.exec();
     output[0] = reverb2(inL*reverbIn) * reverbOut;
     output[1] = reverb1(inR*reverbIn) * reverbOut;
 });
+for(let i=0;i<numTracks;i++){
+    mixer.tracks[i].setup(panDivide(i,7,0.9), 0.6);
+}
 
+// setup //////////////////////////////////////////////
 let oscMixMod = []
 let adsrList = [];
 let filterAdsr = [];
@@ -197,9 +202,8 @@ for(let i=0;i<numTracks;i++){
     filterList[i] = FilterBq.create(400,0.9);
     lp[i] = Filter.create(1,"lp");
     pwmHz[i] = rand(1,2);
-    pwmHzFM[i] = rand(0.1,0.2);
-    oscMixMod[i] = rand(0.01,0.05);
-    mixer.tracks[i].setup(panDivide(i,7,0.9), 0.6, null, 0.3);
+    pwmHzFM[i] = rand(0.1,0.2) *twoPIoFs;
+    oscMixMod[i] = rand(0.01,0.05)*twoPIoFs;
 }
 
 let osc1List = [], osc2List = [];
@@ -217,35 +221,35 @@ for(let i=0,a=[8,9,10,12,14];i<5;i++){
 
 function randOn(){
     let n = randInt(numTracks-1);
-    let ad = rand(0.4,2) * exp(-hzList[n]/3200);
-    adsrList[n].setA(ad);
-    adsrList[n].setD(ad);
-    filterAdsr[n].setA(ad);
-    filterAdsr[n].setD(ad);
+    let a = rand(0.4,2) * exp(-hzList[n]/3200);
+    adsrList[n].setA(a);
+    filterAdsr[n].setA(a);
+    let d = rand(0.4,2) * exp(-hzList[n]/3200);
+    adsrList[n].setD(d);
+    filterAdsr[n].setD(d);
     let r = cosINeg( random() , 0.5);
     hzList[n] = scale[floor(r * scale.length)];
-    let vol = rand(0.1,1) *  exp(-hzList[n]/1000);
-    vol= exp(-hzList[n]/1000)
+    let vol = random() *  exp(-hzList[n]/1000);
     adsrList[n].noteOn(vol);
     filterAdsr[n].noteOn();
-    let filTop = sqrt(hzList[n]/1500)*1500;
+    // let filTop = (1-exp(-hzList[n]/400))*2400;
+    let filTop = fractionCurve(hzList[n]/2800,-5) * 2400;
     filterBottom[n] = filTop/2;
     filterDelta[n] = filTop- filterBottom[n];
 }
 randOn();
-cLog(scale)
 
+// process //////////////////////////////////////////////
 function process(L,R,bufferI,fi){
-    fi+=Fs*100;
     if(coin(0.6/Fs))randOn();
     if(coin(0.5/Fs))adsrList[randInt(numTracks-1)].noteOff();
 
     for(let i=0; i<numTracks; i++){
-        pwmPhase[i] += (pwmHz[i]+sin(fi*pwmHzFM[i]*twoPIoFs)*1 ) *twoPIoFs;
+        pwmPhase[i] += (pwmHz[i]+sin(fi*pwmHzFM[i]) ) *twoPIoFs;
         let pwm = sin(pwmPhase[i]);
         let s1 = osc1List[i](hzList[i],  0.25+pwm*0.08);
-        let s2 = osc2List[i](hzList[i]/2,0.25+pwm*0.00);
-        let s = lerp(s1,s2,uni(sin(fi*oscMixMod[i]*twoPIoFs)));
+        let s2 = osc2List[i](hzList[i]/2,0.25);
+        let s = lerp(s1,s2,uni( sin(fi*oscMixMod[i]) ));
         let filterLv = filterBottom[i] +lp[i]( filterDelta[i] );
         filterLv *=  filterAdsr[i].exec();
         s  = filterList[i](s, filterLv );
