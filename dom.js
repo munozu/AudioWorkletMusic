@@ -1,7 +1,7 @@
 const analyser = {
     vuTxt: [],
     buffer: null,
-    modeNum: 1,
+    modeNum: 0,
     unknownLen: 100,
     setup() {
         this.element = gE("analyser");
@@ -15,6 +15,21 @@ const analyser = {
             { size: 2 ** 11, func: this.oscilloscope },
             { size: 2 ** 10, func: this.spectrum3d }
         ];
+        let ctx = this.element.getContext("2d");
+        ctx.fillStyle = "mediumAquamarine";
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.fillStyle = "#fff2";
+        let sec = 5, sr = 50, len = sec * sr;
+        let left = this.height / 10, top = this.height / 2, r = this.height / 30;
+        for (let i = 0; i < len; i++) {
+            let t = i / sr;
+            let y = (t / t ** t - 0.5) * this.height / 3;
+            let x = i / len * this.width;
+            ctx.beginPath()
+            ctx.arc(left + x, top - y, r, 0, 2 * Math.PI, false);
+            ctx.fill();
+        }
+        if (local) this.modeNum = 1;
     },
     init() {
         if (this.modeNum == 0) return;
@@ -138,7 +153,7 @@ const analyser = {
         for (let t = i, len = t + l; i < len; i++) {
             let v = this.buffer[i] / 256 - 0.5;
             let x = (i - t) / l * w;
-            let y = h / 2 - v * h;
+            let y = h / 2 - v * h *2;
             cc.lineTo(x, y);
         }
         cc.lineTo(w, h / 2);

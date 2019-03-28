@@ -6,25 +6,32 @@ const gE = id => { return document.getElementById(id) };
 const gV = id => { return parseFloat(gE(id).value) };
 let info, paramContainers;
 let context, processor, wavCreator;
-let connecting, exportState = 0, autoStart, countInit = 0;
-let scoreNum = 3;
+let connecting, exportState = 0, autoStart, local = false, countInit = 0;
+let numScores = 3, cScoreNum = 3;
 let waveTables = {};
+
+{
+    if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
+    let search = new URLSearchParams(window.location.search);
+    if(search.get("local")=="false") local = false;
+    autoStart = search.get("autoplay") != "false";
+    if (search.get("score") !== null) cScoreNum = search.get("score");
+}
 
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
+    for (let i = 1, selectEl = gE("select-score"); i <= numScores; i++) {
+        let optEl = document.createElement("option");
+        optEl.textContent = i;
+        if (i == cScoreNum) optEl.selected = true;
+        selectEl.append(optEl);
+    }
 
-    let search = new URLSearchParams(window.location.search);
-    autoStart = search.get("auto") != "false";
-    if (search.get("score") !== null) {
-        scoreNum = search.get("score");
-    }
-    for (let o of gE("select-score").children) {
-        if (o.textContent == scoreNum) o.selected = true;
-    }
     analyser.setup();
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");
+
     try { await init(); } catch (error) { info.textContent = error; return; }
     setupEvents();
 });
@@ -35,7 +42,7 @@ function fetchWaveTable(url) {
         .then(buffer => new Float32Array(buffer))
         .then(array => {
             let sampleRate = array[0], harms = 1;
-            let output = waveTables[(url.split(".")[0])] = [];
+            let output = waveTables[(url.split(".")[0])] = {};
             for (let i = 1, l = array.length; i < l; i += sampleRate) {
                 output[harms] = Array.from(array.slice(i, i + sampleRate));
                 harms *= 2;
@@ -53,7 +60,7 @@ function setupEvents() {
     gE("select-score").addEventListener("change", e => {
         for (let o of e.target.children) {
             if (!o.selected) continue;
-            scoreNum = parseInt(o.textContent);
+            cScoreNum = parseInt(o.textContent);
             init();
         }
     });
@@ -70,20 +77,20 @@ async function init() {
     // context = new AudioContext({ latencyHint: lh });
     context = new AudioContext({ latencyHint: lh, sampleRate: 24000 });
 
-    await context.audioWorklet.addModule(`score${scoreNum}.js`);
+    await context.audioWorklet.addModule(`score${cScoreNum}.js`);
 
-    await setupProcessor();
     await setupParameters();
     await setupWavCreator();
+    await setupProcessor();
     if (exportState == 1) return;
 
     gE("latency").value = context.baseLatency;
 
     if (countInit === 1) {
-        info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. `
         if (!autoStart) return;
+        info.textContent = `sampleRate:${context.sampleRate}, baseLatency:${context.baseLatency}. `
         info.textContent += `press any keys`;
-        if (document.location.href.indexOf("127.0.0.1") != -1) connect();
+        if (local) connect();
         else {
             window.addEventListener("keydown", autoConnect);
             window.addEventListener("mousemove", autoConnect);
@@ -100,7 +107,7 @@ async function init() {
     }
 }
 
-async function setupProcessor(){
+async function setupProcessor() {
     processor = await new AudioWorkletNode(context, 'processor', { outputChannelCount: [2] });
     processor.onprocessorerror = e => { console.log(e); info.textContent = "error"; }
     processor.port.onmessage = e => {
@@ -114,7 +121,7 @@ async function setupParameters() {
     gE("param-container").innerHTML = "";
     let setupMessenger = await new AudioWorkletNode(context, "setup");
     setupMessenger.port.onmessage = e => createParameters(e.data);
-    setupMessenger.port.postMessage({ waveTables });
+    setupMessenger.port.postMessage({ waveTables, });
 }
 
 async function setupWavCreator() {
@@ -143,7 +150,7 @@ async function setupWavCreator() {
         let a = document.createElement("a");
         a.href = urlObj;
         a.textContent = "save wav, " + new Date().toLocaleString();
-        a.download = document.title + scoreNum;// + "----" + new Date().toLocaleString();
+        a.download = document.title + cScoreNum;// + "----" + new Date().toLocaleString();
         gE("wav-output").insertBefore(a, gE("wav-output").firstChild);
         info.textContent = "wav created";
         exportState = 0;

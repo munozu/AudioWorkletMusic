@@ -1,5 +1,8 @@
 import * as wavModule from "/wav.js";
-import { XorShift, SetTarget, Mixer, ParameterHandler, MasterAmp, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc} from "/class.js";
+import { XorShift, Mixer, ParameterHandler, MasterAmp } from "/class.js";
+import {SetTarget, EnvelopeQuadratic, ADSR, NoiseLFO, } from "/class.js";
+import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/class.js";
+
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -52,6 +55,9 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   panR =function(x){return sin(quarterPI*(1+x));}
 
 const panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
+function envelopeAD(t,a=0.01,d=1){ return (t<a)?(1/a)*t : max(0, 1-(t-a)*(1/d) ); }
+function envelopeToTpT(t,peak=1,curve=1){ return pow(t/peak, (peak-t)/curve); }
+function envelopeQuadratic(t,sec=2){ return max(0, 1-4/sec/sec*pow(t-sec/2, 2) ); }
 
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
@@ -62,14 +68,17 @@ class Processor extends AudioWorkletProcessor {
     constructor() {
         super();
         this.port.onmessage = this.handleMessage.bind(this);
+        constParams.processor = this;
     }
     static get parameterDescriptors() {
         return parameterDescriptors;
     }
     handleMessage(event) {
         let id = event.data.id, value = event.data.value;
-        let result = constParams.change(id, value, this);
-        if(result)this.port.postMessage(result);
+        constParams.change(id, value, true);
+    }
+    info(v){
+        this.port.postMessage(v.toString());
     }
 }
 Processor.prototype.process = processWrapper;
@@ -83,19 +92,38 @@ class WavCreator extends Processor {
                     recording = !recording;
                     if(!recording)this.port.postMessage(wavModule.get());
                 }
-                else this.export(e.data);
+                else this.exportWav(e.data);
             } catch (error) {
                 this.port.postMessage("Wav Creator Error");
             }
         }.bind(this);
     }
-    export(sec){
+    exportWav(sec){
         exporting = true;
         this.port.postMessage( wavModule.exportWav(sec, processWrapper) );
         exporting = false;
     }
 }
+class Setup extends Processor {
+    constructor() {
+        super();
+        let params = JSON.parse(JSON.stringify(parameters));
+        this.port.onmessage = function(e){
+            waveTables = e.data.waveTables;
+            this.port.postMessage(params);
+            postSetup();
+        }.bind(this);
+    }
+}
 
+let waveTables, masterAmp, recording=false, exporting=false;
+function setup(){
+    constParams.setup(parameters);
+    masterAmp = new MasterAmp(constParams.masterAmp);
+    registerProcessor('processor', Processor);
+    registerProcessor('setup', Setup);
+    registerProcessor('wavCreator', WavCreator);
+}
 function processWrapper (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
@@ -112,29 +140,10 @@ function processWrapper (inputs, outputs, parameters) {
     return true;
 };
 
-let waveTables, masterAmp, recording=false, exporting=false, postSetup=null;
-function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    registerProcessor('processor', Processor);
-    registerProcessor('setup', class extends Processor {
-        constructor() {
-            super();
-            let params = JSON.parse(JSON.stringify(parameters));
-            this.port.onmessage = function(e){
-                waveTables = e.data.waveTables;
-                this.port.postMessage(params);
-                if(postSetup)postSetup();
-            }.bind(this);
-        }
-    });
-    registerProcessor('wavCreator', WavCreator);
-}
-
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
-function kRateProcess(bufferI,bufferLen){
-}
+function kRateProcess(bufferI,bufferLen){}
+function postSetup(){}
 
 let frame = Fs*0;
 const parameters = [
@@ -151,7 +160,8 @@ const parameters = [
 
 setup();
 
-let mixer = new Mixer(64,1);
+let numTracks = 7;
+let mixer = new Mixer(numTracks,1);
 let reverb1, reverb2;
 function initReverb(){
     let xorS = new XorShift(constParams.reverbSeed)
@@ -161,26 +171,26 @@ function initReverb(){
 initReverb();
 let stReverbIn = new SetTarget(0.5,0.1);
 let stReverbOut = new SetTarget(0.5,0.1);
-mixer.setAux(0,2,0,function rvbFunc(inL,inR,L,R,i){;
+mixer.aux[0].setup(0,1,function rvbFunc(inL,inR,output){;
     let reverbIn = stReverbIn.exec();
     let reverbOut = stReverbOut.exec();
-    L[i] += reverb2(inL*reverbIn) * reverbOut;
-    R[i] += reverb1(inR*reverbIn) * reverbOut;
+    output[0] = reverb2(inL*reverbIn) * reverbOut;
+    output[1] = reverb1(inR*reverbIn) * reverbOut;
 });
 
-let numTrack = 7;
 let oscMixMod = []
 let adsrList = [];
 let filterAdsr = [];
 let filterList = [];
-let filterTop = new Array(numTrack).fill(1000);
+let filterBottom = new Array(numTracks).fill(500);
+let filterDelta = new Array(numTracks).fill(500);
 let lp = []
 let pwmHz = [];
 let pwmHzFM = [];
-let pwmPhase = new Array(numTrack).fill(0);
-let hzList = new Array(numTrack).fill(400);
+let pwmPhase = new Array(numTracks).fill(0);
+let hzList = new Array(numTracks).fill(400);
 
-for(let i=0;i<numTrack;i++){
+for(let i=0;i<numTracks;i++){
     adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
     filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
     
@@ -189,12 +199,12 @@ for(let i=0;i<numTrack;i++){
     pwmHz[i] = rand(1,2);
     pwmHzFM[i] = rand(0.1,0.2);
     oscMixMod[i] = rand(0.01,0.05);
-    mixer.setTrack(i, panDivide(i,7,0.9), 0.6, 0.3);
+    mixer.tracks[i].setup(panDivide(i,7,0.9), 0.6, null, 0.3);
 }
 
 let osc1List = [], osc2List = [];
 postSetup=_=>{
-    for(let i=numTrack;i--;){
+    for(let i=numTracks;i--;){
         osc1List.push( PulseOsc.create(waveTables.saw32) );
         osc2List.push( PulseOsc.create(waveTables.tri32) );
     }
@@ -206,10 +216,8 @@ for(let i=0,a=[8,9,10,12,14];i<5;i++){
 }
 
 function randOn(){
-    let n = randInt(numTrack-1);
-    // n = 3
+    let n = randInt(numTracks-1);
     let ad = rand(0.4,2) * exp(-hzList[n]/3200);
-    // ad = 0.1
     adsrList[n].setA(ad);
     adsrList[n].setD(ad);
     filterAdsr[n].setA(ad);
@@ -220,25 +228,29 @@ function randOn(){
     vol= exp(-hzList[n]/1000)
     adsrList[n].noteOn(vol);
     filterAdsr[n].noteOn();
-    filterTop[n] = sqrt(hzList[n]/3200)*3200;
-    // filterTop[n] = 8000
+    let filTop = sqrt(hzList[n]/1500)*1500;
+    filterBottom[n] = filTop/2;
+    filterDelta[n] = filTop- filterBottom[n];
 }
 randOn();
+cLog(scale)
 
 function process(L,R,bufferI,fi){
     fi+=Fs*100;
     if(coin(0.6/Fs))randOn();
-    if(coin(0.5/Fs))adsrList[randInt(numTrack-1)].noteOff();
+    if(coin(0.5/Fs))adsrList[randInt(numTracks-1)].noteOff();
 
-    for(let i=0; i<numTrack; i++){
+    for(let i=0; i<numTracks; i++){
         pwmPhase[i] += (pwmHz[i]+sin(fi*pwmHzFM[i]*twoPIoFs)*1 ) *twoPIoFs;
         let pwm = sin(pwmPhase[i]);
-        let s1 = osc1List[i](hzList[i],  0.25+pwm*0.10);
+        let s1 = osc1List[i](hzList[i],  0.25+pwm*0.08);
         let s2 = osc2List[i](hzList[i]/2,0.25+pwm*0.00);
         let s = lerp(s1,s2,uni(sin(fi*oscMixMod[i]*twoPIoFs)));
-        s  = filterList[i](s, 20+lp[i](filterTop[i])*filterAdsr[i].exec() );
+        let filterLv = filterBottom[i] +lp[i]( filterDelta[i] );
+        filterLv *=  filterAdsr[i].exec();
+        s  = filterList[i](s, filterLv );
         s *= adsrList[i].exec();
-        mixer.track(i,s,L,R,bufferI);
+        mixer.tracks[i].input1ch(s);
     }
-    mixer.outputAux(L,R,bufferI);
+    mixer.output(L,R,bufferI);
 }

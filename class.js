@@ -4,6 +4,7 @@ const twoPI = PI*2, halfPI = PI/2, quarterPI = PI/4, isArray = Array.isArray;
 const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const panR =function(x){return sin(quarterPI*(1+x));}, panL =function(x){return cos(quarterPI*(1+x));}
+function doNothing(arg){return arg}
 
 class XorShift{
     constructor(s = 0x87654321){this.u = new Uint32Array([s]);}
@@ -53,14 +54,18 @@ class ParameterHandler{
             this[p.name] = p.defaultValue;
         }
     }
-    change(id, value) {
+    change(id, value, fromEvent=false) {
         let p = this.descriptors[id];
         if(!p)return;
         let clampedValue = clamp(parseFloat(value), p.minValue, p.maxValue);
         this[id] = clampedValue;
         if(p.callback) p.callback(clampedValue);
-        if (value == clampedValue) return id + " " + value;
-        else return id + " clamped " + clampedValue;
+        if (value == clampedValue) this.processor.info(id + " " + value);
+        else this.processor.info(id + " clamped " + clampedValue);
+        if(!fromEvent)this.indicate(id,value)
+    }
+    indicate(id, value){
+        this.processor.port.postMessage({id,value});
     }
 }
 
@@ -116,59 +121,75 @@ class MasterAmp{
 };
 
 class Mixer{
-    constructor(numTracks=64, numAux=0){
+    constructor(numTracks=16, numAux=0){
         this.tracks = [];
-        for(let i=0;i<numTracks;i++)this.tracks.push({
-            amp:1, pan:0, l:panL(0), r:panR(0),
-            aux:[{ amp: 0.2 }]
-        });
-        this.numAux = numAux;
         this.aux = [];
+        this.numTracks = numTracks;
+        for(let i=0;i<numTracks;i++)this.tracks.push(new this.Track(numAux));
+        this.numAux = numAux;
+        for(let i=0;i<numAux;i++)this.aux.push(new this.Track(0));
+        this.tracksAll = this.tracks.concat(this.aux);
+        this.numTracksAll = this.tracksAll.length;
+    }
+    output(L,R,i){
+        for(let i=0;i<this.numTracks;i++){
+            for(let j=0;j<this.numAux;j++){
+                this.tracks[i].send(j,this.aux[j]);
+            }
+        }
+        for(let j=0; j<this.numTracksAll; j++){
+            this.tracksAll[j].output(L,R,i);
+        }
+    }
+}
 
-        for(let i=0;i<numAux;i++){
-            this.aux.push({
-                amp:1, pan:0, l:panL(0), r:panR(0),
-                bufferL: 0,
-                bufferR: 0,
-                func: null,
-            });
+Mixer.prototype.Track = class Track{
+    constructor(numSends=0){
+        this.amp = 1;
+        this.pan = 0;
+        this.lAmp = panL(0);
+        this.rAmp = panL(0);
+        this.sends = [];
+        this.bufferL = 0;
+        this.bufferR = 0;
+        this.bufferAfterEffect = [[0,0]];
+        this.numSends = numSends;
+        this.effect = null;
+        for(let i=0; i<numSends;i++){
+            this.sends[i] = {amp:0.2}
         }
     }
-    setTrack(n,pan=0,amp=1, ...auxAmp){
-        let trk = this.tracks[n];
-        trk.pan = pan;
-        trk.amp = amp;
-        trk.l = panL(pan) *amp;
-        trk.r = panR(pan) *amp;
+    setup(pan=0,amp=1,effectFunc=null, ...auxAmp){
+        this.pan = pan;
+        this.amp = amp;
+        this.effect = effectFunc;
+        this.lAmp = panL(pan) *amp;
+        this.rAmp = panR(pan) *amp;
         for(let i=0, l=auxAmp.length;i<l;i++){
-            trk.aux[i].amp = auxAmp[i];
+            this.sends[i].amp = auxAmp[i];
         }
     }
-    setAux(n, amp, pan, func){
-        let ax = this.aux[n];
-        ax.func = func;
-        ax.amp = amp;
-        ax.pan = pan;
-        ax.l = panL(pan)*ax.amp;
-        ax.r = panR(pan)*ax.amp;
+    input1ch(s){
+        this.bufferL += s;
+        this.bufferR += s;
     }
-    track(n,s,L,R,i){
-        let trk =this.tracks[n];
-        let outL = s *trk.l;
-        let outR = s *trk.r;
-        L[i] += outL;
-        R[i] += outR;
-        for(let j=0,l = this.numAux; j<l; j++){
-            this.aux[j].bufferL += outL * trk.aux[j].amp;
-            this.aux[j].bufferR += outR * trk.aux[j].amp;
-        }
+    send(n, target){
+        target.bufferL += this.bufferL *this.sends[n].amp;
+        target.bufferR += this.bufferR *this.sends[n].amp;
     }
-    outputAux(L,R,i){
-        for(let j=0,len = this.aux.length; j<len; j++){
-            let ax = this.aux[j];
-            ax.func(ax.bufferL *ax.l, ax.bufferR *ax.r, L, R, i);
-            ax.bufferL = ax.bufferR = 0;
-        }
+    execEffect(){
+        this.effect(this.bufferL, this.bufferR, this.bufferAfterEffect);
+        this.bufferL = this.bufferAfterEffect[0];
+        this.bufferR = this.bufferAfterEffect[1];
+    }
+    output(L,R,i){
+        let trk = this;
+        trk.bufferL *= trk.lAmp;
+        trk.bufferR *= trk.rAmp;
+        if(trk.effect)trk.execEffect();
+        L[i] += trk.bufferL;
+        R[i] += trk.bufferR;
+        trk.bufferL = trk.bufferR = 0;
     }
 }
 
@@ -250,6 +271,34 @@ class ADSR {// multi trigger, linear
     }
 }
 
+class NoiseLFO{
+    constructor(hz=5,curve=cosI,targetFunc=noise){
+        [this.hz,this.curve,this.targetFunc] = [hz,curve,targetFunc];
+        this.x = this.x1 = 0;
+        this.y1 = targetFunc();
+        if(typeof hz == "function")this.shift = this.shiftF;
+        this.shift(hz);
+    }
+    shift(hz){
+        this.y0 = this.y1;
+        this.y1 = this.targetFunc();
+        this.x0 = this.x1;
+        this.x1 += Fs/hz;
+    }
+    shiftF(){
+        this.y0 = this.y1;
+        this.y1 = this.targetFunc();
+        this.x0 = this.x1;
+        this.x1 += Fs/this.hz();
+    }
+    exec(hz=this.hz){
+        if(this.x++>this.x1)this.shift(hz);
+        let ratio = this.curve( (this.x-this.x0)/(this.x1-this.x0) );
+        return this.y0 * (1-ratio) + this.y1*ratio;
+    }
+    static create(hz,curveFunc,targetFunc){let c=new NoiseLFO(...arguments);return c.exec.bind(c);}
+}
+
 class WaveTableOsc{
     constructor(waveTable,fixedHarms=false){
         this.waveTable = waveTable;
@@ -307,6 +356,27 @@ class PulseOsc extends WaveTableOsc{
     static create(table){let c=new PulseOsc(...arguments); return c.exec.bind(c);}
 }
 
+
+class Sampler{
+    constructor(source, hz=1){
+        this.source = source;
+        this.sourceLen = source.length;
+        this.hz = hz;
+        this.i = 0;
+    }
+    exec(i,hz){
+        i *= hz/this.hz;
+        let x1 = floor(i), x2 =x1+1, amt= i-x1;
+        return lerp(this.source[x1%this.sourceLen], this.source[x2%this.sourceLen],amt);
+    }
+    oneUse(hz){
+        this.i += hz/this.hz
+        let x1 = floor(this.i), x2 =x1+1, amt= this.i-x1;
+        return lerp(this.source[x1%this.sourceLen], this.source[x2%this.sourceLen],amt);
+    }
+    static createOneUseInstance(source,hz){let c=new Sampler(...arguments);return c.oneUse.bind(c);}
+}
+
 class Filter{
     constructor(fc=1000,type="lp",init=0){
         this.b1 = exp(-twoPI*fc/Fs);
@@ -337,6 +407,25 @@ class FilterBq{
     notch(t, q, alpha, cosW0){ t.b0=1;           t.b1=-2*cosW0;  t.b2=1;     }
     ap(   t, q, alpha, cosW0){ t.b0=1 - alpha;   t.b1=-2*cosW0;  t.b2=1+alpha;}
     static create(fc,q,type,ini){let c=new FilterBq(...arguments); return c.exec.bind(c);}
+}
+
+
+class Delay{
+    constructor(sec=0.3, feedGain=0.7, wet=0.3, func=doNothing, bufSec=5){
+        [this.wet,this.sec,this.feedGain,this.func] = [wet,sec,feedGain,func];
+        this.buffer = new Array(floor(bufSec*Fs)).fill(0);
+        this.bLen  = this.index = this.buffer.length;
+    }
+    exec(s,sec=this.sec, feedGain=this.feedGain, wet=this.wet){
+        let t=this.index, d= sec*Fs, d1=floor(d), d2=d1+1, slope=d-d1;
+        let y1 = this.buffer[(t-d1)%this.bLen];
+        let y2 = this.buffer[(t-d2)%this.bLen];
+        let pre = y1 + slope*(y2 - y1);
+        this.buffer[t%this.bLen] = this.func(s+pre*feedGain);
+        this.index++;
+        return pre*wet +s*(1-wet);
+    }
+    static create(sec,feedGain,wet,func,bufSec){let d=new Delay(...arguments);return d.exec.bind(d);}
 }
 
 class FeedbackDelay {
@@ -401,4 +490,5 @@ ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototyp
     }
     static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
-export {XorShift, ParameterHandler, Mixer, MasterAmp, SetTarget, EnvelopeQuadratic, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc}
+export {XorShift, ParameterHandler, Mixer, MasterAmp, SetTarget, EnvelopeQuadratic, ADSR, NoiseLFO}
+export {Filter, FilterBq, Delay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}

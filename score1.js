@@ -1,12 +1,14 @@
 import * as wavModule from "/wav.js";
-import { XorShift, SetTarget, Mixer, ParameterHandler, MasterAmp, ADSR, Filter, FilterBq, ReverbSchroeder, WaveTableOsc, PulseOsc} from "/class.js";
+import { XorShift, Mixer, ParameterHandler, MasterAmp } from "/class.js";
+import {SetTarget, EnvelopeQuadratic, ADSR, NoiseLFO, } from "/class.js";
+import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/class.js";
+
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
 function doNothing(arg){return arg}
 
 //math
-//Object.getOwnPropertyNames(Math).forEach(p=>self[p]=Math[p]);
 const abs=Math.abs, acos=Math.acos, acosh=Math.acosh, asin=Math.asin, asinh=Math.asinh, atan=Math.atan, atanh=Math.atanh, atan2=Math.atan2, ceil=Math.ceil, cbrt=Math.cbrt, expm1=Math.expm1, clz32=Math.clz32, cos=Math.cos, cosh=Math.cosh, exp=Math.exp, floor=Math.floor, fround=Math.fround, hypot=Math.hypot, imul=Math.imul, log=Math.log, log1p=Math.log1p, log2=Math.log2, log10=Math.log10, max=Math.max, min=Math.min, pow=Math.pow, random=Math.random, round=Math.round, sign=Math.sign, sin=Math.sin, sinh=Math.sinh, sqrt=Math.sqrt, tan=Math.tan, tanh=Math.tanh, trunc=Math.trunc, E=Math.E, LN10=Math.LN10, LN2=Math.LN2, LOG10E=Math.LOG10E, LOG2E=Math.LOG2E, PI=Math.PI, SQRT1_2=Math.SQRT1_2, SQRT2=Math.SQRT2;
 const twoPI = PI*2, halfPI = PI/2, quarterPI = PI/4, isArray = Array.isArray;
 const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
@@ -53,6 +55,9 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   panR =function(x){return sin(quarterPI*(1+x));}
 
 const panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
+function envelopeAD(t,a=0.01,d=1){ return (t<a)?(1/a)*t : max(0, 1-(t-a)*(1/d) ); }
+function envelopeToTpT(t,peak=1,curve=1){ return pow(t/peak, (peak-t)/curve); }
+function envelopeQuadratic(t,sec=2){ return max(0, 1-4/sec/sec*pow(t-sec/2, 2) ); }
 
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
@@ -63,14 +68,17 @@ class Processor extends AudioWorkletProcessor {
     constructor() {
         super();
         this.port.onmessage = this.handleMessage.bind(this);
+        constParams.processor = this;
     }
     static get parameterDescriptors() {
         return parameterDescriptors;
     }
     handleMessage(event) {
         let id = event.data.id, value = event.data.value;
-        let result = constParams.change(id, value, this);
-        if(result)this.port.postMessage(result);
+        constParams.change(id, value, true);
+    }
+    info(v){
+        this.port.postMessage(v.toString());
     }
 }
 Processor.prototype.process = processWrapper;
@@ -84,19 +92,38 @@ class WavCreator extends Processor {
                     recording = !recording;
                     if(!recording)this.port.postMessage(wavModule.get());
                 }
-                else this.export(e.data);
+                else this.exportWav(e.data);
             } catch (error) {
                 this.port.postMessage("Wav Creator Error");
             }
         }.bind(this);
     }
-    export(sec){
+    exportWav(sec){
         exporting = true;
         this.port.postMessage( wavModule.exportWav(sec, processWrapper) );
         exporting = false;
     }
 }
+class Setup extends Processor {
+    constructor() {
+        super();
+        let params = JSON.parse(JSON.stringify(parameters));
+        this.port.onmessage = function(e){
+            waveTables = e.data.waveTables;
+            this.port.postMessage(params);
+            postSetup();
+        }.bind(this);
+    }
+}
 
+let waveTables, masterAmp, recording=false, exporting=false;
+function setup(){
+    constParams.setup(parameters);
+    masterAmp = new MasterAmp(constParams.masterAmp);
+    registerProcessor('processor', Processor);
+    registerProcessor('setup', Setup);
+    registerProcessor('wavCreator', WavCreator);
+}
 function processWrapper (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
@@ -113,29 +140,10 @@ function processWrapper (inputs, outputs, parameters) {
     return true;
 };
 
-let waveTables, masterAmp, recording=false, exporting=false, postSetup=null;
-function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    registerProcessor('processor', Processor);
-    registerProcessor('setup', class extends Processor {
-        constructor() {
-            super();
-            let params = JSON.parse(JSON.stringify(parameters));
-            this.port.onmessage = function(e){
-                waveTables = e.data.waveTables;
-                this.port.postMessage(params);
-                if(postSetup)postSetup();
-            }.bind(this);
-        }
-    });
-    registerProcessor('wavCreator', WavCreator);
-}
-
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
-function kRateProcess(bufferI,bufferLen){
-}
+function kRateProcess(){}
+function postSetup(){}
 
 let frame = Fs*0;
 const parameters = [
@@ -161,21 +169,21 @@ let lfoVibC = baseList.map(v=>2*sqrt(v)/Fs*twoPI);
 let lfoVibM = baseList.map(v=>v/100/Fs*twoPI);
 let startList = baseList.map(v=>sin(v*7)*twoPI);
 let phaserList  = baseList.map(v=>uni(sin(v*5)));
-let length = baseList.length;
-let phaseList = new Array(length).fill(0);
-let vibPhaseList = new Array(length).fill(0);
+let numTracks = baseList.length;
+let phaseList = new Array(numTracks).fill(0);
+let vibPhaseList = new Array(numTracks).fill(0);
 let shapers = [tanh,s=>sineCurve(s),s=>s,s=>s*s*s];
 
 let vol = 0.45;
 
-let mixer = new Mixer();
-for(let i=0,l=baseList.length;i<l;i++){
+let mixer = new Mixer(numTracks);
+for(let i=0;i<numTracks;i++){
     let b = baseList[i];
-    mixer.setTrack( i, (b*13.27)%2-1, vol );
+    mixer.tracks[i].setup(  (b*13.27)%2-1, vol );
 }
 
-function process(L,R,i,fi){
-    for(let j=0;j<length;j++){
+function process(L,R,bufferI,fi){
+    for(let j=0;j<numTracks;j++){
         vibPhaseList[j] += lfoVibC[j] * ( 0.2 + uni( sin(fi*lfoVibM[j]) ) );
         let vib = sin( vibPhaseList[j]  )*0.3/12;
 
@@ -187,6 +195,7 @@ function process(L,R,i,fi){
         s *= uni( sin(fi*lfo2[j]) );
         s *= uni( sin(fi*lfo3[j]) );
         s = shapers[j%4](s);
-        mixer.track(j,s,L,R,i);
+        mixer.tracks[j].input1ch(s);
     }
+    mixer.output(L,R,bufferI)
 }
