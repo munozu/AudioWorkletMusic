@@ -153,7 +153,7 @@ const analyser = {
         for (let t = i, len = t + l; i < len; i++) {
             let v = this.buffer[i] / 256 - 0.5;
             let x = (i - t) / l * w;
-            let y = h / 2 - v * h *2;
+            let y = h / 2 - v * h * 2;
             cc.lineTo(x, y);
         }
         cc.lineTo(w, h / 2);

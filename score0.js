@@ -64,6 +64,8 @@ function envelopeQuadratic(t,sec=2){ return max(0, 1-4/sec/sec*pow(t-sec/2, 2) )
 
 const parameterDescriptors = [];
 const constParams = new  ParameterHandler();
+
+AudioWorkletProcessor.prototype.process = doNothing;
 class Processor extends AudioWorkletProcessor {
     constructor() {
         super();
@@ -83,7 +85,7 @@ class Processor extends AudioWorkletProcessor {
 }
 Processor.prototype.process = processWrapper;
 
-class WavCreator extends Processor {
+class WavCreator extends AudioWorkletProcessor {
     constructor() {
         super();
         this.port.onmessage = function(e){
@@ -104,7 +106,7 @@ class WavCreator extends Processor {
         exporting = false;
     }
 }
-class Setup extends Processor {
+class Setup extends AudioWorkletProcessor {
     constructor() {
         super();
         let params = JSON.parse(JSON.stringify(parameters));
@@ -124,6 +126,7 @@ function setup(){
     registerProcessor('setup', Setup);
     registerProcessor('wavCreator', WavCreator);
 }
+
 function processWrapper (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
@@ -157,13 +160,13 @@ const parameters = [
 setup();
 
 // mixer //////////////////////////////////////////////
-let numTracks = 5;
+let numTracks = 1;
 let mixer = new Mixer(numTracks,1);
 {
     let delFilterL = Filter.create(3000)
-    let delFilterR = Filter.create(3000)
+    // let delFilterR = Filter.create(3000)
     let delL = Delay.create(4,0.7, 1,delFilterL);
-    let delR = Delay.create(2,0.0, 1,delFilterR);
+    let delR = Delay.create(2,0.0, 1);
     function delaySt(inL,inR,output){
         output[0] = inL *0.5;
         output[1] = inR *0.5;
@@ -171,8 +174,9 @@ let mixer = new Mixer(numTracks,1);
         output[0] += wetL
         output[1] += +delR(wetL);
     }
-    mixer.tracks[2].setup(
-        panDivide(2,numTracks,0.9),
+    mixer.tracks[0].setup(
+        // panDivide(2,numTracks,0.9),
+        0,
         0.5,
         delaySt
     );
@@ -184,7 +188,7 @@ function rvbFunc(inL,inR,output){
     output[0] = reverb1(inL);
     output[1] = reverb2(inR);
 }
-mixer.aux[0].setup(0,dBtoRatio(-12),rvbFunc);
+mixer.aux[0].setup(0,dBtoRatio(-24),rvbFunc);
 
 
 // setup //////////////////////////////////////////////
@@ -207,14 +211,14 @@ let sampleBaseHz = 400;
         noiseSample.push(s)
     }
     fade(noiseSample,0.01)
-} // sample creation
+} // noise sample
 
 let sampler = Sampler.createOneUseInstance(noiseSample,sampleBaseHz);
 let scale = [], mainScale = [];
 for(let i=-2;i<=-1;i++){
     // for(let o of [8,8,9,10,12,12,15,16])scale.push(o*100*2**i);
     for(let o of [8,8,8,8,9,10,10,11,12,12,12,13,14,14,15])scale.push(o*100*2**i);
-    for(let o of [8,9,10,12,15])mainScale.push(o*100*2**i);
+    for(let o of [9,10,12,15])mainScale.push(o*100*2**i);
 }
 
 let noteHz = scale[0];
@@ -279,7 +283,7 @@ function process(L,R,bufferI,fi,processor){
     s1 = waveShaperCubic(s1,amp);
     s1 *= amp;
     let s2 = sampler(hzMod) *amp * nLfo1();
-    let s = lerp(s1,s2,0.7)
-    mixer.tracks[2].input1ch(s)
+    let s = lerp(s1,s2,0.75)
+    mixer.tracks[0].input1ch(s)
     mixer.output(L,R,bufferI)
 }

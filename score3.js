@@ -169,7 +169,7 @@ for(let i=0;i<numTracks;i++){
 let xorS = new XorShift(17);
 let reverb1 = ReverbSchroeder.create(5,xorS);
 let reverb2 = ReverbSchroeder.create(5,xorS);
-mixer.aux[0].setup(0,dBtoRatio(-32),function rvbFunc(inL,inR,output){
+mixer.aux[0].setup(0,dBtoRatio(-33),function rvbFunc(inL,inR,output){
     output[0] = reverb1(inL)
     output[1] = reverb2(inR)
 })

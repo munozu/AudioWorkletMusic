@@ -131,7 +131,7 @@ class Mixer{
         this.tracksAll = this.tracks.concat(this.aux);
         this.numTracksAll = this.tracksAll.length;
     }
-    output(L,R,i){
+    output(L,R,bufferI){
         for(let i=0;i<this.numTracks;i++){
             let trk = this.tracks[i];
             if(trk.effect)trk.execEffect();
@@ -139,8 +139,9 @@ class Mixer{
                 trk.send(j,this.aux[j]);
             }
         }
-        for(let j=0; j<this.numTracksAll; j++){
-            this.tracksAll[j].output(L,R,i);
+        for(let i=0; i<this.numAux; i++)this.aux[i].execEffect();
+        for(let i=0; i<this.numTracksAll; i++){
+            this.tracksAll[i].output(L,R,bufferI);
         }
     }
 }
@@ -349,7 +350,7 @@ class PulseOsc extends WaveTableOsc{
         super(table);
     }
     exec(hz, duty=0.25, ratio=0.5){
-        let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);// TODO:整数マップを作ってパフォーマンス比較
+        let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
         let source = this.waveTable[num];
         this.acc += hz/Fs;
         

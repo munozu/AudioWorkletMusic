@@ -143,7 +143,6 @@ function processWrapper (inputs, outputs, parameters) {
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 function kRateProcess(bufferI,bufferLen){}
-function postSetup(){}
 
 let frame = Fs*0;
 const parameters = [
@@ -179,7 +178,7 @@ mixer.aux[0].setup(0,dBtoRatio(-28)*4,function rvbFunc(inL,inR,output){;
     output[1] = reverb1(inR*reverbIn) * reverbOut;
 });
 for(let i=0;i<numTracks;i++){
-    mixer.tracks[i].setup(panDivide(i,7,0.9), 0.6);
+    mixer.tracks[i].setup(panDivide(i,numTracks,0.9), 1.1);
 }
 
 // setup //////////////////////////////////////////////
@@ -199,7 +198,7 @@ for(let i=0;i<numTracks;i++){
     adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
     filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
     
-    filterList[i] = FilterBq.create(400,0.9);
+    filterList[i] = FilterBq.create(400,1.5);
     lp[i] = Filter.create(1,"lp");
     pwmHz[i] = rand(1,2);
     pwmHzFM[i] = rand(0.1,0.2) *twoPIoFs;
@@ -207,7 +206,7 @@ for(let i=0;i<numTracks;i++){
 }
 
 let osc1List = [], osc2List = [];
-postSetup=_=>{
+function postSetup(){
     for(let i=numTracks;i--;){
         osc1List.push( PulseOsc.create(waveTables.saw32) );
         osc2List.push( PulseOsc.create(waveTables.tri32) );

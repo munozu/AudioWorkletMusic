@@ -13,7 +13,7 @@ let waveTables = {};
 {
     if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
     let search = new URLSearchParams(window.location.search);
-    if(search.get("local")=="false") local = false;
+    if (search.get("local") == "false") local = false;
     autoStart = search.get("autoplay") != "false";
     if (search.get("score") !== null) cScoreNum = search.get("score");
 }
@@ -21,7 +21,7 @@ let waveTables = {};
 window.addEventListener("load", async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
-    if(!local)gE("record").style.display = "none";
+    if (!local) gE("record").style.display = "none";
     for (let i = 1, selectEl = gE("select-score"); i <= numScores; i++) {
         let optEl = document.createElement("option");
         optEl.textContent = i;
