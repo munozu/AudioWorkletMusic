@@ -1,8 +1,8 @@
-import * as wavModule from "/wav.js";
-import { XorShift, Mixer, ParameterHandler, MasterAmp } from "/class.js";
-import {SetTarget, EnvelopeQuadratic, ADSR, NoiseLFO, } from "/class.js";
-import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/class.js";
 
+import * as wavModule from "/worklet/wav.js";
+import { XorShift, Mixer, ParameterHandler, MasterAmp, SetTarget,  } from "/worklet//mixer.js";
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet//class.js";
+import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet//class.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -28,23 +28,10 @@ function randInt(min=1,max=0){
     if(max<min)[min,max] = [max,min];
     return min + floor( random()*(max-min+1) );
 }
-function shuffle(array, m=Math) {
-    for(let i=0, l=array.length-1, a=l+1, r; i<l; i++){
-        r = floor(m.random() *a);
-        [array[i],array[r]] = [array[r],array[i]];
-    }
-    return array;
-}
 
 //wave
 const uni  =function(v){return (v+1)/2}
-,   noise  =function( ){return random()*2-1}
-,   siT    =function(t){return sin(twoPI*t)}
-,   tri    =function(t){return abs((((t+1/4)*4)+2)%4 -2)-1}
-,   saw    =function(t){return (t*2+1)%2 -1}
-,   square =function(t){return ((t*2+1)%2 -1) - (((t+0.5)*2+1)%2 -1)}
-,   pulse  =function(t, duty=0.5){return saw(t) - saw(t+duty)}
-,   pulse1 =function(t, duty=0.5){return (t-floor(t))<duty?-1:1}
+,   noise  =function( ){return random()*2-1};
 
 // sound
 const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})()
@@ -53,17 +40,15 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   octave=function(hz,oct=0){return hz*pow(2,oct);}
 ,   panL =function(x){return cos(quarterPI*(1+x));}
 ,   panR =function(x){return sin(quarterPI*(1+x));}
-
-const panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
-function envelopeAD(t,a=0.01,d=1){ return (t<a)?(1/a)*t : max(0, 1-(t-a)*(1/d) ); }
-function envelopeToTpT(t,peak=1,curve=1){ return pow(t/peak, (peak-t)/curve); }
-function envelopeQuadratic(t,sec=2){ return max(0, 1-4/sec/sec*pow(t-sec/2, 2) ); }
+,   panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
 
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
 const parameterDescriptors = [];
 const constParams = new  ParameterHandler();
+
+AudioWorkletProcessor.prototype.process = doNothing;
 class Processor extends AudioWorkletProcessor {
     constructor() {
         super();
@@ -83,7 +68,7 @@ class Processor extends AudioWorkletProcessor {
 }
 Processor.prototype.process = processWrapper;
 
-class WavCreator extends Processor {
+class WavCreator extends AudioWorkletProcessor {
     constructor() {
         super();
         this.port.onmessage = function(e){
@@ -104,7 +89,7 @@ class WavCreator extends Processor {
         exporting = false;
     }
 }
-class Setup extends Processor {
+class Setup extends AudioWorkletProcessor {
     constructor() {
         super();
         let params = JSON.parse(JSON.stringify(parameters));
@@ -124,6 +109,7 @@ function setup(){
     registerProcessor('setup', Setup);
     registerProcessor('wavCreator', WavCreator);
 }
+
 function processWrapper (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
@@ -175,6 +161,9 @@ mixer.aux[0].setup(0,dBtoRatio(-33),function rvbFunc(inL,inR,output){
 })
 
 // setup //////////////////////////////////////////////
+function envelopeAD(t,a=0.01,d=1){ return (t<a)?(1/a)*t : max(0, 1-(t-a)*(1/d) ); }
+function envelopeToTpT(t,peak=1,curve=1){ return pow(t/peak, (peak-t)/curve); }
+function envelopeQuadratic(t,sec=2){ return max(0, 1-4/sec/sec*pow(t-sec/2, 2) ); }
 let list = [], waitList = [];
 let thresholdEnd = 100/(2**16*0.5);
 let tt = 1/44100;

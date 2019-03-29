@@ -38,7 +38,7 @@ window.addEventListener("load", async function setup() {
 });
 
 function fetchWaveTable(url) {
-    fetch(url)
+    fetch("wavetable/" + url)
         .then(res => res.arrayBuffer())
         .then(buffer => new Float32Array(buffer))
         .then(array => {
@@ -77,8 +77,8 @@ async function init() {
 
     // context = new AudioContext({ latencyHint: lh });
     context = new AudioContext({ latencyHint: lh, sampleRate: 24000 });
-
-    await context.audioWorklet.addModule(`score${cScoreNum}.js`);
+    console.log(context)
+    await context.audioWorklet.addModule(`worklet/score${cScoreNum}.js`);
 
     await setupParameters();
     await setupWavCreator();
