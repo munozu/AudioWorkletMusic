@@ -6,6 +6,7 @@ const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
 const panR =function(x){return sin(quarterPI*(1+x));}, panL =function(x){return cos(quarterPI*(1+x));}
 function doNothing(arg){return arg}
+function cLog(obj){console.log(JSON.stringify(obj))} 
 let primeNumber;
 
 class EnvelopeQuadratic{
@@ -106,10 +107,7 @@ class WaveTableOsc{
         this.acc = 0;
         
         if(this.maxHarms==1)fixedHarms = 1;
-        if(fixedHarms){
-            this.num = fixedHarms;
-            this.exec = this.fixed;
-        }
+        if(fixedHarms) this.fixedTable = waveTable[fixedHarms];
     }
     exec(phase,hz){
         let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
@@ -129,14 +127,15 @@ class WaveTableOsc{
         return s;
     }
     fixed(hz){
-        let source = this.waveTable[this.num];
+        let source = this.fixedTable;
         this.acc += hz/Fs;
         let ind = (this.acc * this.sampleRate) % this.sampleRate;
         let x1 = floor(ind), x2 = x1+1, amt = ind-x1;
         let s = lerp(source[x1],source[x2],amt);
         return s;
     }
-    static create(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.oneUse.bind(c);}
+    static createOneUseInstance(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.oneUse.bind(c);}
+    static createFixedInstance(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.fixed.bind(c);}
 }
 
 class PulseOsc extends WaveTableOsc{
@@ -232,12 +231,25 @@ class Delay{
     static create(sec,feedGain,wet,func,bufSec){let d=new Delay(...arguments);return d.exec.bind(d);}
 }
 
-class FeedbackDelay {
-    constructor(sec = 0.3, feedGain = 0.7, bufSec = 1) {
-        this.feedGain = feedGain;
+class FeedForwardDelay {
+    constructor(sec = 0.3, bufSec = 5) {
         this.buffer = new Array(floor(bufSec * Fs)).fill(0);
         this.bLen = this.t = this.buffer.length;
         this.d = round(sec * Fs);
+    }
+    exec(s) {
+        let pre = this.buffer[(this.t - this.d) % this.bLen];
+        this.buffer[this.t % this.bLen] = s;
+        this.t++;
+        return pre;
+    }
+    static create(sec, bufSec) { let d = new FeedForwardDelay(...arguments); return d.exec.bind(d); }
+}
+
+class FeedbackDelay extends FeedForwardDelay{
+    constructor(sec = 0.3, feedGain = 0.7, bufSec = 1) {
+        super(sec,bufSec)
+        this.feedGain = feedGain;
     }
     exec(s) {
         let pre = this.buffer[(this.t - this.d) % this.bLen];
@@ -296,4 +308,4 @@ ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototyp
     static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
 export {EnvelopeQuadratic, ADSR, NoiseLFO}
-export {Filter, FilterBq, Delay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}
+export {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}

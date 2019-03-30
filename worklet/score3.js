@@ -1,8 +1,7 @@
-
-import * as wavModule from "/worklet/wav.js";
-import { XorShift, Mixer, ParameterHandler, MasterAmp, SetTarget,  } from "/worklet//mixer.js";
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet//class.js";
-import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet//class.js";
+import {register,changeMasterAmp} from "/worklet/processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
+import { XorShift, Mixer, SetTarget } from "/worklet/mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -45,91 +44,7 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
-const parameterDescriptors = [];
-const constParams = new  ParameterHandler();
-
-AudioWorkletProcessor.prototype.process = doNothing;
-class Processor extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = this.handleMessage.bind(this);
-        constParams.processor = this;
-    }
-    static get parameterDescriptors() {
-        return parameterDescriptors;
-    }
-    handleMessage(event) {
-        let id = event.data.id, value = event.data.value;
-        constParams.change(id, value, true);
-    }
-    info(v){
-        this.port.postMessage(v.toString());
-    }
-}
-Processor.prototype.process = processWrapper;
-
-class WavCreator extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = function(e){
-            try {
-                if(e.data=="record"){
-                    recording = !recording;
-                    if(!recording)this.port.postMessage(wavModule.get());
-                }
-                else this.exportWav(e.data);
-            } catch (error) {
-                this.port.postMessage("Wav Creator Error");
-            }
-        }.bind(this);
-    }
-    exportWav(sec){
-        exporting = true;
-        this.port.postMessage( wavModule.exportWav(sec, processWrapper) );
-        exporting = false;
-    }
-}
-class Setup extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        let params = JSON.parse(JSON.stringify(parameters));
-        this.port.onmessage = function(e){
-            waveTables = e.data.waveTables;
-            this.port.postMessage(params);
-            postSetup();
-        }.bind(this);
-    }
-}
-
-let waveTables, masterAmp, recording=false, exporting=false;
-function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    registerProcessor('processor', Processor);
-    registerProcessor('setup', Setup);
-    registerProcessor('wavCreator', WavCreator);
-}
-
-function processWrapper (inputs, outputs, parameters) {
-    const L = outputs[0][0];
-    const R = outputs[0][1];
-    const bufferLen = L.length;
-    kRateProcess(frame,bufferLen);
-    
-    for(let i=0; i<bufferLen; i++){
-        const fi = frame + i; 
-        process(L,R,i,fi,this);
-    }
-    if(recording){ for(let i=0; i<bufferLen; i++)wavModule.record(L[i],R[i]); }
-    if(!exporting){ for(let i=0; i<bufferLen; i++)masterAmp.exec(L,R,i,frame+i,this,constParams) };
-    frame += bufferLen;
-    return true;
-};
-
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-
-let frame = Fs*0;
+let waveTables;
 const parameters = [
     { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
     { type: "separator", value: "t/t^t Envelope" },
@@ -143,19 +58,18 @@ const parameters = [
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
     // { name: 'param3', defaultValue: 0.01, minValue: 0.001, maxValue: 2, ramp: true, unit:"unit" },
 ]
-
-setup();
+let constParams = register(parameters,postSetup,aRateProcess,kRateProcess);
 
 // mixer //////////////////////////////////////////////
 let numTracks = 8;
 let mixer = new Mixer(numTracks,1);
 for(let i=0;i<numTracks;i++){
-    mixer.tracks[i].setup( panDivide(i,numTracks,0.9), 0.5, null, 0.1 +abs( panDivide(i,numTracks,0.9) ) );
+    mixer.tracks[i].setup( panDivide(i,numTracks,0.9), 0.5, null, 0.2 +abs( panDivide(i,numTracks,0.8) ) );
 }
 let xorS = new XorShift(17);
 let reverb1 = ReverbSchroeder.create(5,xorS);
 let reverb2 = ReverbSchroeder.create(5,xorS);
-mixer.aux[0].setup(0,dBtoRatio(-33),function rvbFunc(inL,inR,output){
+mixer.aux[0].setup(0,dBtoRatio(-26),function rvbFunc(inL,inR,output){
     output[0] = reverb1(inL)
     output[1] = reverb2(inR)
 })
@@ -198,7 +112,7 @@ function addNote(indInSec){
         pitchEnvD: random()**3*0.1,
         pitchEnvHz: randInt(-1,1)*12.5,
         t:0,
-        osc1: WaveTableOsc.create(waveTables.tri32),
+        osc1: WaveTableOsc.createOneUseInstance(waveTables.tri32),
         hz, a, d, ma, md,
     }
     list.push(obj);
@@ -238,7 +152,7 @@ function addDelay(indInSec, obj,t,vol,trk,count){
     delayed.t = -t;
     delayed.ringLv *= 0.5**count;
     delayed.vel *=vol
-    delayed.osc1 = WaveTableOsc.create(waveTables.tri32);
+    delayed.osc1 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
     delayed.waitSec = 0;
     while(delayed.t<-1){
         delayed.waitSec++
@@ -259,7 +173,8 @@ let masterLp1 = Filter.create(1000,"lp")
 let masterLp2 = Filter.create(1000,"lp")
 let envQuad = new EnvelopeQuadratic(10);
 
-function postSetup(){
+function postSetup(_waveTables){
+    waveTables = _waveTables;
     addNote(0);
 }
 
@@ -272,7 +187,7 @@ function kRateProcess(bufferI,bufferLen){
     list = tempList;
 }
 
-function process(L,R,bufferI,fi,processor){
+function aRateProcess(L,R,bufferI,fi,processor){
     let indInSec = fi%Fs;
     if(indInSec==0){
         let tempList = [];

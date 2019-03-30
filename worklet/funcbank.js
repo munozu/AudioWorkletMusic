@@ -12,7 +12,7 @@ const tri    =function(t){return abs((((t+1/4)*4)+2)%4 -2)-1}
 ,   pulse  =function(t, duty=0.5){return saw(t) - saw(t+duty)}
 ,   pulse1 =function(t, duty=0.5){return (t-floor(t))<duty?-1:1}
 
-const fade  =(x, sec=0.01, sec2=sec)=>{
+function fade(x, sec=0.01, sec2=sec){
     for(let i=0, c=round(sec *Fs); i<c; i++)x[i]*=i/c;
     for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=i/c;
     return x;

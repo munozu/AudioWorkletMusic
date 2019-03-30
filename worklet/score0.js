@@ -1,8 +1,7 @@
-
-import * as wavModule from "/worklet/wav.js";
-import { XorShift, Mixer, ParameterHandler, MasterAmp, SetTarget,  } from "/worklet//mixer.js";
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet//class.js";
-import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet//class.js";
+import {register,changeMasterAmp} from "/worklet/processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
+import { XorShift, Mixer, SetTarget } from "/worklet/mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -42,120 +41,36 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   panR =function(x){return sin(quarterPI*(1+x));}
 ,   panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
 
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-
-const parameterDescriptors = [];
-const constParams = new  ParameterHandler();
-
-AudioWorkletProcessor.prototype.process = doNothing;
-class Processor extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = this.handleMessage.bind(this);
-        constParams.processor = this;
-    }
-    static get parameterDescriptors() {
-        return parameterDescriptors;
-    }
-    handleMessage(event) {
-        let id = event.data.id, value = event.data.value;
-        constParams.change(id, value, true);
-    }
-    info(v){
-        this.port.postMessage(v.toString());
-    }
-}
-Processor.prototype.process = processWrapper;
-
-class WavCreator extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = function(e){
-            try {
-                if(e.data=="record"){
-                    recording = !recording;
-                    if(!recording)this.port.postMessage(wavModule.get());
-                }
-                else this.exportWav(e.data);
-            } catch (error) {
-                this.port.postMessage("Wav Creator Error");
-            }
-        }.bind(this);
-    }
-    exportWav(sec){
-        exporting = true;
-        this.port.postMessage( wavModule.exportWav(sec, processWrapper) );
-        exporting = false;
-    }
-}
-class Setup extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        let params = JSON.parse(JSON.stringify(parameters));
-        this.port.onmessage = function(e){
-            waveTables = e.data.waveTables;
-            this.port.postMessage(params);
-            postSetup();
-        }.bind(this);
-    }
-}
-
-let waveTables, masterAmp, recording=false, exporting=false;
-function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    registerProcessor('processor', Processor);
-    registerProcessor('setup', Setup);
-    registerProcessor('wavCreator', WavCreator);
-}
-
-function processWrapper (inputs, outputs, parameters) {
-    const L = outputs[0][0];
-    const R = outputs[0][1];
-    const bufferLen = L.length;
-    kRateProcess(frame,bufferLen);
-    
-    for(let i=0; i<bufferLen; i++){
-        const fi = frame + i; 
-        process(L,R,i,fi,this);
-    }
-    if(recording){ for(let i=0; i<bufferLen; i++)wavModule.record(L[i],R[i]); }
-    if(!exporting){ for(let i=0; i<bufferLen; i++)masterAmp.exec(L,R,i,frame+i,this,constParams) };
-    frame += bufferLen;
-    return true;
-};
 
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
-
-
-
-let frame = Fs*0;
+let waveTables;
 const parameters = [
-    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: changeMasterAmp },
+    { name: 'pitch', defaultValue: 1, minValue: 0.001, maxValue: 2, exp: 2 },
     // { type: "separator", value: "parameters" },
     // { name: 'param1', defaultValue: 1, minValue: 1, maxValue: 10, type: "number", step:1 },
-    // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
+    // { name: 'param2', defaultValue: 1, minValue: 0.001, maxValue: 2, exp: 2 },
     // { name: 'param3', defaultValue: 0.01, minValue: 0.001, maxValue: 2, ramp: true, unit:"unit" },
 ]
+const constParams = register(parameters,postSetup,aRateProcess,kRateProcess);
 
-setup();
 
 // mixer //////////////////////////////////////////////
-let numTracks = 2;
-let mixer = new Mixer(numTracks,1);
+const numTracks = 2;
+const mixer = new Mixer(numTracks,1);
 {
     let delFilterL = Filter.create(3000)
     // let delFilterR = Filter.create(3000)
     let delL = Delay.create(4, 0.7, 1,delFilterL);
-    let delR = Delay.create(2, 0.0, 1);
+    // let delR = Delay.create(2, 0.0, 1);
+    let delR = FeedForwardDelay.create(2);
     function delaySt(inL,inR,output){
-        output[0] = inL *0.5;
-        output[1] = inR *0.5;
+        output[0] = inL *0.7; //dry
+        output[1] = inR *0.7;
         let wetL = delL((inL+inR)/2) * 0.5;
         output[0] += wetL
-        output[1] += +delR(wetL);
+        output[1] += delR(wetL);
     }
     mixer.tracks[0].setup( 0, 0.5, delaySt );
     mixer.tracks[1].setup( 0, 0.5, null, 0.2 );
@@ -170,12 +85,17 @@ let mixer = new Mixer(numTracks,1);
         output[0] = reverb1.exec(inL);
         output[1] = reverb2.exec(inR);
     }
-    mixer.aux[0].setup(0,dBtoRatio(-24),rvbFunc);
+    mixer.aux[0].setup(0,dBtoRatio(-28),rvbFunc);
 }
 
-
 // setup //////////////////////////////////////////////
-const fade  =(x, sec=0.01, sec2=sec)=>{
+
+function waveShaperCubic(s,k=0.5){
+    let area = (1+k)/2 - k/4;
+    let amp = 0.5/area;
+    return ((1+k)*s - k*s*s*s) *amp;
+}
+function fade(x, sec=0.01, sec2=sec){
     for(let i=0, c=round(sec *Fs); i<c; i++)x[i]*=i/c;
     for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=i/c;
     return x;
@@ -183,8 +103,8 @@ const fade  =(x, sec=0.01, sec2=sec)=>{
 let noiseSample = [];
 let sampleBaseHz = 400;
 {
-    let lp = FilterBq.create(sampleBaseHz,0.1,"bp");
-    let hp = FilterBq.create(sampleBaseHz/2,1,"hp");
+    let lp = FilterBq.create(sampleBaseHz  ,0.1,"bp");
+    let hp = FilterBq.create(sampleBaseHz/2,1,  "hp");
     let del = Delay.create(1/sampleBaseHz,0.9,1)
     for(let i=0, l=Fs*10; i<l; i++){
         let s = noise() *40;
@@ -208,10 +128,12 @@ let noteHz = scale[0];
 let noteLp = Filter.create(1,"lp",noteHz)
 let noteN = 0;
 let nextTime = 2;
-let osc1;
+let osc1, sawLFO;
 
-function postSetup(){
+function postSetup(_waveTables){
+    waveTables = _waveTables;
     osc1 = new WaveTableOsc(waveTables.tri32);
+    sawLFO = WaveTableOsc.createFixedInstance(waveTables.saw32, 4);
     adsr.noteOn();
 }
 
@@ -250,16 +172,11 @@ function kRateProcess(frame,bufferLen){
     }   
 }
 
-function waveShaperCubic(s,k=0.5){
-    let area = (1+k)/2 - k/4;
-    let amp = 0.5/area;
-    return ((1+k)*s - k*s*s*s) *amp;
-}
-
 let accOsc1 = 0,  accOsc1Mod = 0;
 let accOsc1PanMod = 0;
-function process(L,R,bufferI,fi,processor){
-    let hz = ( noteLp(noteHz) );
+let sawLFOHz = 4;
+function aRateProcess(L,R,bufferI,fi,processor){
+    let hz = ( noteLp(noteHz*constParams.pitch) );
     let adsrAmp = adsr.exec();
         
     let hzMod = octave(hz,nLfo2()*0.3/12);
@@ -272,9 +189,12 @@ function process(L,R,bufferI,fi,processor){
     s1 *= adsrAmp
     // accOsc1PanMod += twoPIoFs *( 3+ 2*sin(.4*fi*twoPIoFs) );
 
-    let s= lerp(s0,s1,.25)
+    let s= lerp(s0,s1,.25);
+    // if(fi%Fs==0)sawLFOHz = randInt(1,4);
+    // s *= uni( -sawLFO(sawLFOHz) )
+    
     mixer.tracks[0].input1ch(s)
-    // mixer.tracks[1].input1ch(s1)
+    // mixer.tracks[1].input1ch(sawLFO(100) )
     // mixer.tracks[1].input1to2ch(s1, sineCurve( sin(accOsc1PanMod) ) )
     mixer.output(L,R,bufferI)
 }

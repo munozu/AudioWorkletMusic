@@ -22,7 +22,7 @@ body {
 #container2 {
     width: 800px;
     margin: 0 auto;
-    padding-top: 3em;
+    padding: 3em 0;
 }
 
 #param-container {

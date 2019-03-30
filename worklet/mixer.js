@@ -38,85 +38,6 @@ class PrimeNumber{
     }
 }
 
-class ParameterHandler{
-    constructor(){
-        this.descriptors = {};
-    }
-    setup(parameters) {
-        for (let p of parameters) {
-            if (p.ramp) {
-                parameterDescriptors.push(p);
-                continue;
-            }
-            this.descriptors[p.name] = p;
-            this[p.name] = p.defaultValue;
-        }
-    }
-    change(id, value, fromEvent=false) {
-        let p = this.descriptors[id];
-        if(!p)return;
-        let clampedValue = clamp(parseFloat(value), p.minValue, p.maxValue);
-        this[id] = clampedValue;
-        if(p.callback) p.callback(clampedValue);
-        if (value == clampedValue) this.processor.info(id + " " + value);
-        else this.processor.info(id + " clamped " + clampedValue);
-        if(!fromEvent)this.indicate(id,value)
-    }
-    indicate(id, value){
-        this.processor.port.postMessage({id,value});
-    }
-}
-
-class MasterAmp{
-    constructor(iniTarget){
-        this.setTarget = new SetTarget(0, 0.1, iniTarget);
-        this.gain = 0;
-        this.preTarget = iniTarget;
-        this.preMax = 0;
-        this.prePeakL = this.prePeakR = 0;
-        this.peakCount = 0;
-        this.analyserInterval = round(0.5*Fs);
-        this.sqSumL = this.sqSumR = 0;
-    }
-    change(v){
-        this.setTarget.setValue(v);
-        this.preTarget = v;
-    }
-    analyse(l,r,i,fi,processor){
-        this.sqSumL += l[i] * l[i];
-        this.sqSumR += r[i] * r[i];
-        this.prePeakL = max( this.prePeakL, abs(l[i]) );
-        this.prePeakR = max( this.prePeakR, abs(r[i]) );
-        if(this.peakCount++<this.analyserInterval)return;
-        let pl = this.prePeakL;
-        let pr = this.prePeakR;
-        this.preMax = max(pl, pr, this.preMax);
-        let rmsLVal = sqrt(this.sqSumL/this.analyserInterval);
-        let rmsRVal = sqrt(this.sqSumR/this.analyserInterval);
-        processor.port.postMessage({id:"vu",value:{l:pl,r:pr,max:this.preMax,time:fi/Fs,rmsLVal,rmsRVal}});
-        this.sqSumL = this.sqSumR = 0;
-        this.prePeakL = this.prePeakR = this.peakCount = 0;
-    }
-    exec(l,r,i,fi,processor,constParams){
-        this.analyse(l,r,i,fi, processor);
-        let preMax = max( abs(l[i]), abs(r[i]) ), ma = preMax*this.gain;
-
-        if (ma> 1){
-            let target = this.gain/ma;
-            if(this.preTarget<target)return;
-            this.preTarget = target;
-            this.setTarget.setValue(target);
-
-            constParams.change("masterAmp",target);
-            processor.port.postMessage(`masterAmp ${target}`);
-            processor.port.postMessage({ id: "masterAmp", value: target });
-        }
-
-        this.gain = this.setTarget.exec();
-        l[i] *= this.gain;
-        r[i] *= this.gain;
-    }
-};
 
 class Mixer{
     constructor(numTracks=16, numAux=0){
@@ -130,17 +51,13 @@ class Mixer{
         this.numTracksAll = this.tracksAll.length;
     }
     output(L,R,bufferI){
-        for(let i=0;i<this.numTracks;i++){
-            let trk = this.tracks[i];
+        for(let i=0; i<this.numTracks; i++){
+            const trk = this.tracks[i];
             if(trk.effect)trk.execEffect();
-            for(let j=0;j<this.numAux;j++){
-                trk.send(j,this.aux[j]);
-            }
+            for(let j=0; j<this.numAux; j++)trk.send(j,this.aux[j]);
         }
         for(let i=0; i<this.numAux; i++)this.aux[i].execEffect();
-        for(let i=0; i<this.numTracksAll; i++){
-            this.tracksAll[i].output(L,R,bufferI);
-        }
+        for(let i=0; i<this.numTracksAll; i++)this.tracksAll[i].output(L,R,bufferI);
     }
 }
 
@@ -156,7 +73,7 @@ class Track{
         this.bufferAfterEffect = [[0,0]];
         this.numSends = numSends;
         this.effect = null;
-        for(let i=0; i<numSends;i++){
+        for(let i=0; i<numSends; i++){
             this.sends[i] = {amp:1}
         }
     }
@@ -192,12 +109,11 @@ class Track{
         this.bufferR = this.bufferAfterEffect[1];
     }
     output(L,R,i){
-        let trk = this;
-        trk.bufferL *= trk.lAmp;
-        trk.bufferR *= trk.rAmp;
-        L[i] += trk.bufferL;
-        R[i] += trk.bufferR;
-        trk.bufferL = trk.bufferR = 0;
+        this.bufferL *= this.lAmp;
+        this.bufferR *= this.rAmp;
+        L[i] += this.bufferL;
+        R[i] += this.bufferR;
+        this.bufferL = this.bufferR = 0;
     }
 }
 
@@ -220,4 +136,4 @@ class SetTarget {
     }
 }
 
-export{XorShift, PrimeNumber, ParameterHandler, Mixer, MasterAmp, SetTarget, }
+export{XorShift, PrimeNumber, Mixer, SetTarget, }

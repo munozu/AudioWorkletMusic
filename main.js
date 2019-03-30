@@ -9,14 +9,13 @@ let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, local = false, countInit = 0;
 let numScores = 3, cScoreNum = 3;
 let waveTables = {};
-
 {
     if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
     let search = new URLSearchParams(window.location.search);
     if (search.get("local") == "false") local = false;
     autoStart = search.get("autoplay") != "false";
     if (search.get("score") !== null) cScoreNum = search.get("score");
-}
+} // parse
 
 window.addEventListener("load", async function setup() {
     info = gE("info");
@@ -33,9 +32,14 @@ window.addEventListener("load", async function setup() {
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");
 
-    try { await init(); } catch (error) { info.textContent = error; return; }
+    try { await init(); } catch (e) { informError(e); return; }
     setupEvents();
 });
+
+function informError(e) {
+    console.log(e);
+    info.textContent = e.type || e;
+}
 
 function fetchWaveTable(url) {
     fetch("wavetable/" + url)
@@ -50,7 +54,8 @@ function fetchWaveTable(url) {
             }
             output.sampleRate = sampleRate;
             output.maxHarms = harms / 2;
-        });
+        })
+        .catch(informError)
 }
 
 function setupEvents() {
@@ -62,6 +67,7 @@ function setupEvents() {
         for (let o of e.target.children) {
             if (!o.selected) continue;
             cScoreNum = parseInt(o.textContent);
+            if (!cScoreNum) cScoreNum = 0;
             init();
         }
     });
@@ -73,12 +79,10 @@ async function init() {
     if (context) context.close();
     analyser.stop();
 
-    let lh = (++countInit === 1) ? 1 : gV("latency");
+    let latencyHint = (++countInit === 1) ? 1 : gV("latency");
+    context = new AudioContext({ latencyHint, sampleRate: 24000 });
 
-    // context = new AudioContext({ latencyHint: lh });
-    context = new AudioContext({ latencyHint: lh, sampleRate: 24000 });
-    console.log(context)
-    await context.audioWorklet.addModule(`worklet/score${cScoreNum}.js`);
+    await context.audioWorklet.addModule(`worklet/score${cScoreNum}.js`).catch(informError)
 
     await setupParameters();
     await setupWavCreator();
@@ -110,23 +114,25 @@ async function init() {
 
 async function setupProcessor() {
     processor = await new AudioWorkletNode(context, 'processor', { outputChannelCount: [2] });
-    processor.onprocessorerror = e => { console.log(e); info.textContent = "error"; }
+    processor.onprocessorerror = informError;
     processor.port.onmessage = e => {
         if (typeof e.data == "string") info.textContent = e.data;
-        else if (e.data.id == "vu") analyser.setVu(e.data.value);
+        else if (e.data.id == "vu") analyser.writeVu(e.data.value);
         else gE(e.data.id).value = e.data.value;
     }
 }
 
 async function setupParameters() {
-    gE("param-container").innerHTML = "";
+    paramContainers.innerHTML = "";
     let setupMessenger = await new AudioWorkletNode(context, "setup");
+    setupMessenger.onprocessorerror = informError;
     setupMessenger.port.onmessage = e => createParameters(e.data);
     setupMessenger.port.postMessage({ waveTables, });
 }
 
 async function setupWavCreator() {
     wavCreator = await new AudioWorkletNode(context, "wavCreator");
+    wavCreator.onprocessorerror = informError;
     let recording = false;
     wavCreator.record = _ => {
         recording = !recording;

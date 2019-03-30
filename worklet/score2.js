@@ -1,8 +1,7 @@
-
-import * as wavModule from "/worklet/wav.js";
-import { XorShift, Mixer, ParameterHandler, MasterAmp, SetTarget,  } from "/worklet//mixer.js";
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet//class.js";
-import {Filter, FilterBq, Delay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet//class.js";
+import {register,changeMasterAmp} from "/worklet/processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
+import { XorShift, Mixer, SetTarget } from "/worklet/mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -45,94 +44,9 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 /////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
-const parameterDescriptors = [];
-const constParams = new  ParameterHandler();
-
-AudioWorkletProcessor.prototype.process = doNothing;
-class Processor extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = this.handleMessage.bind(this);
-        constParams.processor = this;
-    }
-    static get parameterDescriptors() {
-        return parameterDescriptors;
-    }
-    handleMessage(event) {
-        let id = event.data.id, value = event.data.value;
-        constParams.change(id, value, true);
-    }
-    info(v){
-        this.port.postMessage(v.toString());
-    }
-}
-Processor.prototype.process = processWrapper;
-
-class WavCreator extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        this.port.onmessage = function(e){
-            try {
-                if(e.data=="record"){
-                    recording = !recording;
-                    if(!recording)this.port.postMessage(wavModule.get());
-                }
-                else this.exportWav(e.data);
-            } catch (error) {
-                this.port.postMessage("Wav Creator Error");
-            }
-        }.bind(this);
-    }
-    exportWav(sec){
-        exporting = true;
-        this.port.postMessage( wavModule.exportWav(sec, processWrapper) );
-        exporting = false;
-    }
-}
-class Setup extends AudioWorkletProcessor {
-    constructor() {
-        super();
-        let params = JSON.parse(JSON.stringify(parameters));
-        this.port.onmessage = function(e){
-            waveTables = e.data.waveTables;
-            this.port.postMessage(params);
-            postSetup();
-        }.bind(this);
-    }
-}
-
-let waveTables, masterAmp, recording=false, exporting=false;
-function setup(){
-    constParams.setup(parameters);
-    masterAmp = new MasterAmp(constParams.masterAmp);
-    registerProcessor('processor', Processor);
-    registerProcessor('setup', Setup);
-    registerProcessor('wavCreator', WavCreator);
-}
-
-function processWrapper (inputs, outputs, parameters) {
-    const L = outputs[0][0];
-    const R = outputs[0][1];
-    const bufferLen = L.length;
-    kRateProcess(frame,bufferLen);
-    
-    for(let i=0; i<bufferLen; i++){
-        const fi = frame + i; 
-        process(L,R,i,fi,this);
-    }
-    if(recording){ for(let i=0; i<bufferLen; i++)wavModule.record(L[i],R[i]); }
-    if(!exporting){ for(let i=0; i<bufferLen; i++)masterAmp.exec(L,R,i,frame+i,this,constParams) };
-    frame += bufferLen;
-    return true;
-};
-
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-function kRateProcess(bufferI,bufferLen){}
-
-let frame = Fs*0;
 const parameters = [
     { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { type: "separator", value: "Reverb" },
     { name: 'reverbSeed', defaultValue: 1, minValue: 1, maxValue: 100, step:1, callback: initReverb  },
     { name: 'reverbTime', defaultValue: 10, minValue: 0.1, maxValue:20, callback: initReverb },
     { name: 'reverbIn', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbIn.setValue(v)  },
@@ -143,7 +57,7 @@ const parameters = [
     // { name: 'param3', defaultValue: 0.01, minValue: 0.001, maxValue: 2, ramp: true, unit:"unit" },
 ]
 
-setup();
+let constParams = register(parameters,postSetup,aRateProcess,kRateProcess);
 
 // mixer //////////////////////////////////////////////
 let numTracks = 6;
@@ -157,7 +71,7 @@ function initReverb(){
 initReverb();
 let stReverbIn = new SetTarget(0.5,0.1);
 let stReverbOut = new SetTarget(0.5,0.1);
-mixer.aux[0].setup(0,dBtoRatio(-26)*4,function rvbFunc(inL,inR,output){;
+mixer.aux[0].setup(0,dBtoRatio(-25)*4,function rvbFunc(inL,inR,output){;
     let reverbIn = stReverbIn.exec();
     let reverbOut = stReverbOut.exec();
     output[0] = reverb2(inL*reverbIn) * reverbOut;
@@ -191,13 +105,6 @@ for(let i=0;i<numTracks;i++){
     oscMixMod[i] = rand(0.01,0.05)*twoPIoFs;
 }
 
-let osc1List = [], osc2List = [];
-function postSetup(){
-    for(let i=numTracks;i--;){
-        osc1List.push( PulseOsc.create(waveTables.saw32) );
-        osc2List.push( PulseOsc.create(waveTables.tri32) );
-    }
-}
 
 let scale = [];
 for(let i=0,a=[8,9,10,12,14];i<5;i++){
@@ -220,14 +127,23 @@ function randOn(){
     
     adsrList[n].noteOn(vol);
     filterAdsr[n].noteOn();
-    let filTop = fractionCurve(hzList[n]/2800,-5) * 2200;
+    let filTop = fractionCurve(hzList[n]/2800,-5) * 2000;
     filterBottom[n] = filTop/2;
     filterDelta[n] = filTop- filterBottom[n];
 }
 randOn();
 
+let osc1List = [], osc2List = [];
+function postSetup(waveTables){
+    for(let i=numTracks;i--;){
+        osc1List.push( PulseOsc.create(waveTables.saw32) );
+        osc2List.push( PulseOsc.create(waveTables.tri32) );
+    }
+}
+
 // process //////////////////////////////////////////////
-function process(L,R,bufferI,fi){
+function kRateProcess(bufferI,bufferLen){}
+function aRateProcess(L,R,bufferI,fi){
     if(coin(0.55/Fs))randOn();
     if(coin(0.5/Fs))adsrList[randInt(numTracks-1)].noteOff();
 

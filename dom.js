@@ -112,7 +112,7 @@ const analyser = {
         cancelAnimationFrame(this.animId);
         this.draw = null;
     },
-    setVu(data) {
+    writeVu(data) {
         if (this.modeNum == 0) return;
         let lr = ((-data.rmsLVal + data.rmsRVal) / (data.rmsLVal + data.rmsRVal)).toFixed(3);
         if (lr >= 0) lr = "+" + lr;
