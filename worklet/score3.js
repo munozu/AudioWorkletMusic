@@ -46,7 +46,7 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 
 let waveTables;
 const parameters = [
-    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: changeMasterAmp },
     { type: "separator", value: "t/t^t Envelope" },
     { name: 'randomEnvelope',  defaultValue: 1,   minValue: 0,    maxValue: 1, step:1 },
     { name: 'carrierPeakTime', defaultValue: 0.1, minValue: 0.01, maxValue: 2, exp: 1, unit:"sec" },

@@ -45,7 +45,7 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 /////////////////////////////////////////////////////////////////////////
 
 const parameters = [
-    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: changeMasterAmp },
     { type: "separator", value: "Reverb" },
     { name: 'reverbSeed', defaultValue: 1, minValue: 1, maxValue: 100, step:1, callback: initReverb  },
     { name: 'reverbTime', defaultValue: 10, minValue: 0.1, maxValue:20, callback: initReverb },
@@ -82,80 +82,118 @@ for(let i=0;i<numTracks;i++){
 }
 
 // setup //////////////////////////////////////////////
-let oscMixMod = []
-let adsrList = [];
-let filterAdsr = [];
-let filterList = [];
-let filterBottom = new Array(numTracks).fill(500);
-let filterDelta = new Array(numTracks).fill(500);
-let lp = []
-let pwmHz = [];
-let pwmHzFM = [];
-let pwmPhase = new Array(numTracks).fill(0);
-let hzList = new Array(numTracks).fill(400);
-
-for(let i=0;i<numTracks;i++){
-    adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
-    filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
-    
-    filterList[i] = FilterBq.create(400,1.2);
-    lp[i] = Filter.create(1,"lp");
-    pwmHz[i] = rand(1,2);
-    pwmHzFM[i] = rand(0.1,0.2) *twoPIoFs;
-    oscMixMod[i] = rand(0.01,0.05)*twoPIoFs;
-}
 
 
 let scale = [];
 for(let i=0,a=[8,9,10,12,14];i<5;i++){
     for(let n of a)scale.push(12.5*n *2**i);
 }
+console.log(scale)
 
-function randOn(){
+function judgeBeating(hz,n){
+    for(let i=0;i<numTracks;i++){
+        if(n==i)continue;
+        let diff = abs( synths[i].hz -hz );
+        if(diff<50&&diff!=0)return true;
+    }
+    return false;
+}  // うなりを避けるため25Hz 以内の差で音が重なるのを避ける
+//TODO: オシレーター別に計算
+
+
+let adsrList = [];
+let filterAdsr = [];
+let filterBottom = new Array(numTracks).fill(500); // TODO: 移行
+let filterDelta = new Array(numTracks).fill(500);
+
+let _synth = {
+    osc1:null,
+    osc2:null,
+    oscMiMod:null,
+    adsr:null,
+    filterAdsr:null,
+    filter:null,
+    filterBottom:500,
+    filterDelta:500,
+    lpFilterTop:null,
+    pwmHz:null,
+    pwmHzFM:null,
+    pwmPhase:0,
+    hz:800,
+    halfHz:400,
+    lastOnFrame:-Fs,
+}
+
+let synths = [];
+
+function postSetup(waveTables){
+    for(let i=0; i<numTracks;i++){
+        synths[i] = Object.assign({},_synth);
+        let synth = synths[i];
+    
+        adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
+        filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
+        
+        synth.lpFilterTop = Filter.create(1,"lp");
+        synth.filter = FilterBq.create(400,1.2);
+        synth.osc1 = PulseOsc.create(waveTables.saw32);
+        synth.osc2 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
+        synth.pwmHz = rand(1,2);
+        synth.pwmHzFM = rand(0.2,0.3) *twoPIoFs;
+        synth.oscMixMod = rand(0.01,0.05)*twoPIoFs;
+    }
+    randOn(0);
+}
+
+function randOn(frame){
     let n = randInt(numTracks-1);
-    let a = rand(0.4,2) * exp(-hzList[n]/3200);
+    let synth = synths[n];
+
+    if(frame-synth.lastOnFrame<Fs*0.1)return; // 同じオシレーターでは0.1秒以上間隔を開ける
+    synth.lastOnFrame = frame;
+
+    do{
+        let r = random()**1.5;
+        let maxNoteNum = scale.length* sqrt(1-adsrList[n].gain);
+        synth.hz = scale[floor(r * maxNoteNum )];
+    }
+    while(judgeBeating(synth.hz,n));
+    
+    let hz = synth.hz;
+    synth.halfHz = hz/2;
+
+    let a = rand(0.4,2) * exp(-hz/3200);
     adsrList[n].setA(a);
     filterAdsr[n].setA(a);
-    let d = rand(0.4,2) * exp(-hzList[n]/3200);
+    let d = rand(0.4,2) * exp(-hz/3200);
     adsrList[n].setD(d);
     filterAdsr[n].setD(d);
 
-    let r = cosINeg( random() , 0.5);
-    let maxNoteNum = scale.length* sqrt(1-adsrList[n].gain);
-    hzList[n] = scale[floor(r * maxNoteNum )];
-    let vol = exp(-hzList[n]/1500) * sqrt( random() );
-    
+    let vol = exp(-hz/1500) * sqrt( random() );
     adsrList[n].noteOn(vol);
     filterAdsr[n].noteOn();
-    let filTop = fractionCurve(hzList[n]/2800,-5) * 2000;
+    let filTop = fractionCurve(hz/2800,-5) * 2000;
     filterBottom[n] = filTop/2;
     filterDelta[n] = filTop- filterBottom[n];
-}
-randOn();
-
-let osc1List = [], osc2List = [];
-function postSetup(waveTables){
-    for(let i=numTracks;i--;){
-        osc1List.push( PulseOsc.create(waveTables.saw32) );
-        osc2List.push( PulseOsc.create(waveTables.tri32) );
-    }
 }
 
 // process //////////////////////////////////////////////
 function kRateProcess(bufferI,bufferLen){}
-function aRateProcess(L,R,bufferI,fi){
-    if(coin(0.55/Fs))randOn();
+function aRateProcess(L,R,bufferI,frame){
+    if(coin(0.55/Fs))randOn(frame);
     if(coin(0.5/Fs))adsrList[randInt(numTracks-1)].noteOff();
 
     for(let i=0; i<numTracks; i++){
-        pwmPhase[i] += (pwmHz[i]+sin(fi*pwmHzFM[i]) ) *twoPIoFs;
-        let pwm = sin(pwmPhase[i]);
-        let s1 = osc1List[i](hzList[i],  0.25+pwm*0.08);
-        let s2 = osc2List[i](hzList[i]/2,0.25);
-        let s = lerp(s1,s2,uni( sin(fi*oscMixMod[i]) ));
-        let filterLv = filterBottom[i] +lp[i]( filterDelta[i] );
+        let synth = synths[i];
+        synth.pwmPhase += (synth.pwmHz+sin(frame*synth.pwmHzFM) ) *twoPIoFs;
+        let pwm = sin(synth.pwmPhase);
+        let s1 = synth.osc1(synth.hz,  0.25+pwm*0.07);
+        let s2 = synth.osc2(synth.halfHz,0.25) *0.8;
+        let s = lerp(s1,s2,uni( sin(frame*synth.oscMixMod) ));
+        // let s = lerp(s1,s2,1);
+        let filterLv = filterBottom[i] +synth.lpFilterTop( filterDelta[i] );
         filterLv *=  filterAdsr[i].exec();
-        s  = filterList[i](s, filterLv );
+        s  = synth.filter(s, filterLv );
         s *= adsrList[i].exec();
         mixer.tracks[i].input1ch(s);
     }

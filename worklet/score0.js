@@ -1,6 +1,6 @@
 import {register,changeMasterAmp} from "/worklet/processor.js"
 import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
-import {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
 import { XorShift, Mixer, SetTarget } from "/worklet/mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
@@ -61,9 +61,7 @@ const numTracks = 2;
 const mixer = new Mixer(numTracks,1);
 {
     let delFilterL = Filter.create(3000)
-    // let delFilterR = Filter.create(3000)
     let delL = Delay.create(4, 0.7, 1,delFilterL);
-    // let delR = Delay.create(2, 0.0, 1);
     let delR = FeedForwardDelay.create(2);
     function delaySt(inL,inR,output){
         output[0] = inL *0.7; //dry
@@ -72,8 +70,15 @@ const mixer = new Mixer(numTracks,1);
         output[0] += wetL
         output[1] += delR(wetL);
     }
+
+    let delSawL = FeedbackDelay.create(1.3, 0.3, 2);
+    let delSawR = FeedbackDelay.create(1.2, 0.3, 2);
+    function delaySaw(l,r,output){
+        output[0] = delSawL(l)
+        output[1] = delSawR(r)
+    }
     mixer.tracks[0].setup( 0, 0.5, delaySt );
-    mixer.tracks[1].setup( 0, 0.5, null, 0.2 );
+    mixer.tracks[1].setup( 0, 0.0, delaySaw, 1.5 );
 
     let xorS = new XorShift(25)
     let reverb1 = new ReverbSchroeder(5,xorS);
@@ -90,6 +95,12 @@ const mixer = new Mixer(numTracks,1);
 
 // setup //////////////////////////////////////////////
 
+let scale = [], mainScale = [];
+for(let oct=-2;oct<=-1;oct++){
+    for(let n of [8,8,8,8,9,10,10,11,12,12,12,13,14,14,15])scale.push(n*100*2**oct);
+    for(let n of [9,10,12,15])mainScale.push(n*100*2**oct);
+}
+
 function waveShaperCubic(s,k=0.5){
     let area = (1+k)/2 - k/4;
     let amp = 0.5/area;
@@ -100,6 +111,7 @@ function fade(x, sec=0.01, sec2=sec){
     for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=i/c;
     return x;
 };
+
 let noiseSample = [];
 let sampleBaseHz = 400;
 {
@@ -117,32 +129,25 @@ let sampleBaseHz = 400;
 } // noise sample
 
 let sampler = Sampler.createOneUseInstance(noiseSample,sampleBaseHz);
-let scale = [], mainScale = [];
-for(let i=-2;i<=-1;i++){
-    // for(let o of [8,8,9,10,12,12,15,16])scale.push(o*100*2**i);
-    for(let o of [8,8,8,8,9,10,10,11,12,12,12,13,14,14,15])scale.push(o*100*2**i);
-    for(let o of [9,10,12,15])mainScale.push(o*100*2**i);
-}
-
 let noteHz = scale[0];
 let noteLp = Filter.create(1,"lp",noteHz)
 let noteN = 0;
 let nextTime = 2;
-let osc1, sawLFO;
+let osc1, saw;
 
 function postSetup(_waveTables){
     waveTables = _waveTables;
     osc1 = new WaveTableOsc(waveTables.tri32);
-    sawLFO = WaveTableOsc.createFixedInstance(waveTables.saw32, 4);
+    saw = WaveTableOsc.createOneUseInstance(waveTables.saw32);
     adsr.noteOn();
 }
 
 let adsr = new ADSR(1,1,0.3,1);
 let nLfo1 = NoiseLFO.create(5,cosI,random);
 let nLfo2 = NoiseLFO.create(1,cosI,noise);
-let noteOffReservationState = 2;// 0:on, 1:off reserved, 2:off
 
 // process //////////////////////////////////////////////
+let noteOffReservationState = 2;// 0:on, 1:off reserved, 2:off
 function kRateProcess(frame,bufferLen){
     if(nextTime<frame*Ts){
         if(noteOffReservationState==1){
@@ -167,15 +172,16 @@ function kRateProcess(frame,bufferLen){
             noteOffReservationState = 0;
             if(mainScale.includes(noteHz))nextTime += rand(1,1.5);
             else nextTime += rand(0.1,0.3);
-            // nextTime += coin()?1.5:rand(0.1,1);
         }
     }   
 }
 
 let accOsc1 = 0,  accOsc1Mod = 0;
-let accOsc1PanMod = 0;
-let sawLFOHz = 4;
-function aRateProcess(L,R,bufferI,fi,processor){
+let filterSaw = Filter.create(6400,"hp");
+let nLfoSawAmp = NoiseLFO.create(25,cosI,_=>random()**50);
+let nLfoSawPan = NoiseLFO.create(3,cosI,noise);
+let sawLv = 0, sawLvInc = 1/Fs/10;
+function aRateProcess(L,R,bufferInd,frame,processor){
     let hz = ( noteLp(noteHz*constParams.pitch) );
     let adsrAmp = adsr.exec();
         
@@ -187,14 +193,14 @@ function aRateProcess(L,R,bufferI,fi,processor){
     let s1 = osc1.exec(accOsc1 +sin(accOsc1Mod)*.3, hz)
     s1 = waveShaperCubic(s1,adsrAmp);
     s1 *= adsrAmp
-    // accOsc1PanMod += twoPIoFs *( 3+ 2*sin(.4*fi*twoPIoFs) );
 
     let s= lerp(s0,s1,.25);
-    // if(fi%Fs==0)sawLFOHz = randInt(1,4);
-    // s *= uni( -sawLFO(sawLFOHz) )
-    
-    mixer.tracks[0].input1ch(s)
-    // mixer.tracks[1].input1ch(sawLFO(100) )
-    // mixer.tracks[1].input1to2ch(s1, sineCurve( sin(accOsc1PanMod) ) )
-    mixer.output(L,R,bufferI)
+    mixer.tracks[0].input1ch(s);
+
+    sawLv = min(1, sawLv + sawLvInc);
+    let sawS = filterSaw( saw(800)*nLfoSawAmp()*sawLv );
+    mixer.tracks[1].input1to2ch(sawS,nLfoSawPan() );
+
+    mixer.output(L,R,bufferInd);
 }
+

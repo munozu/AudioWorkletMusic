@@ -4,10 +4,13 @@ const abs=Math.abs, acos=Math.acos, acosh=Math.acosh, asin=Math.asin, asinh=Math
 const twoPI = PI*2, halfPI = PI/2, quarterPI = PI/4, isArray = Array.isArray;
 const lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt};
 const clamp = (n, mi, ma) => max(mi, min(ma, n));
+function cosI(x){return (1-cos(x*PI))/2;}// 偶関数
+function noise( ){return random()*2-1};
 const panR =function(x){return sin(quarterPI*(1+x));}, panL =function(x){return cos(quarterPI*(1+x));}
 function doNothing(arg){return arg}
 function cLog(obj){console.log(JSON.stringify(obj))} 
 let primeNumber;
+
 
 class EnvelopeQuadratic{
     constructor(sec=2){
@@ -96,6 +99,14 @@ class NoiseLFO{
     static create(hz,curveFunc,targetFunc){let c=new NoiseLFO(...arguments);return c.exec.bind(c);}
 }
 
+
+function getInterpolatedValue(array, decimalIndex) {
+    let x1 = floor(decimalIndex);
+    let x2 = x1 + 1;
+    let amt = decimalIndex - x1;
+    return lerp(array[x1], array[x2], amt);
+} // 配列最後の要素と最初の要素の補間はしていない
+
 class WaveTableOsc{
     constructor(waveTable,fixedHarms=false){
         this.waveTable = waveTable;
@@ -109,6 +120,12 @@ class WaveTableOsc{
         if(this.maxHarms==1)fixedHarms = 1;
         if(fixedHarms) this.fixedTable = waveTable[fixedHarms];
     }
+    getInterpolatedValue(array, decimalIndex) {
+        let x1 = floor(decimalIndex);
+        let x2 = x1 + 1;
+        let amt = decimalIndex - x1;
+        return lerp(array[x1], array[x2], amt);
+    } // 配列最後の要素と最初の要素の補間はしていない
     exec(phase,hz){
         let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
         let source = this.waveTable[num];
@@ -121,22 +138,19 @@ class WaveTableOsc{
         let num = clamp( pow(2,floor(log2(nyquistF/hz)) ), 1, this.maxHarms);
         let source = this.waveTable[num];
         this.acc += hz/Fs;
-        let ind = (this.acc * this.sampleRate) % this.sampleRate;
-        let x1 = floor(ind), x2 = x1+1, amt = ind-x1;
-        let s = lerp(source[x1],source[x2],amt);
-        return s;
+        let ind = (this.acc %1) * this.sampleRate;
+        return this.getInterpolatedValue(source,ind);
     }
     fixed(hz){
         let source = this.fixedTable;
         this.acc += hz/Fs;
-        let ind = (this.acc * this.sampleRate) % this.sampleRate;
-        let x1 = floor(ind), x2 = x1+1, amt = ind-x1;
-        let s = lerp(source[x1],source[x2],amt);
-        return s;
+        let ind = (this.acc %1) * this.sampleRate;
+        return this.getInterpolatedValue(source,ind);
     }
     static createOneUseInstance(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.oneUse.bind(c);}
     static createFixedInstance(waveTable,fixedHarms){let c=new WaveTableOsc(...arguments); return c.fixed.bind(c);}
 }
+
 
 class PulseOsc extends WaveTableOsc{
     constructor(table){
@@ -147,14 +161,13 @@ class PulseOsc extends WaveTableOsc{
         let source = this.waveTable[num];
         this.acc += hz/Fs;
         
-        let ind = (this.acc * this.sampleRate) % this.sampleRate;
-        let x1 = floor(ind), x2 = x1+1, amt = ind-x1;
-        let s = lerp(source[x1],source[x2],amt);
+        let ind = ( this.acc %1 ) * this.sampleRate;
+        let s = this.getInterpolatedValue(source,ind);
 
-        let rInd = ((this.acc+duty) * this.sampleRate) % this.sampleRate;
-        let rx1 = floor(rInd), rx2 = rx1+1, rAmt = rInd-rx1;
-        let rs = lerp(source[rx1],source[rx2],rAmt);
-        return s*(1-ratio) -rs*ratio;
+        let rInd = ((this.acc+duty) %1) * this.sampleRate;
+        let rs = this.getInterpolatedValue(source,rInd);
+        return lerp(s,rs,ratio);
+        // return s*(1-ratio) -rs*ratio;
     }
     static create(table){let c=new PulseOsc(...arguments); return c.exec.bind(c);}
 }
@@ -247,7 +260,7 @@ class FeedForwardDelay {
 }
 
 class FeedbackDelay extends FeedForwardDelay{
-    constructor(sec = 0.3, feedGain = 0.7, bufSec = 1) {
+    constructor(sec = 0.3, feedGain = 0.7, bufSec = 5) {
         super(sec,bufSec)
         this.feedGain = feedGain;
     }
@@ -308,4 +321,4 @@ ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototyp
     static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
 export {EnvelopeQuadratic, ADSR, NoiseLFO}
-export {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}
+export {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}

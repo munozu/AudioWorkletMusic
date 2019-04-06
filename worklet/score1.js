@@ -48,7 +48,7 @@ function kRateProcess(){}
 function postSetup(){}
 
 const parameters = [
-    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: v => masterAmp.change(v) },
+    { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: changeMasterAmp },
     // { type: "separator", value: "parameters" },
     // { name: 'param1', defaultValue: 1, minValue: 1, maxValue: 10, type: "number", step:1 },
     // { name: 'param2', defaultValue: 0.01, minValue: 0.001, maxValue: 2, exp: 2 },
