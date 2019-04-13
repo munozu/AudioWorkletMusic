@@ -57,8 +57,8 @@ const parameters = [
 
 let constParams = register(parameters,postSetup,aRateProcess,kRateProcess);
 
-let baseList = [6,7.5,8,9,10,12,15,16,18,20,24,30];
-let hzList = baseList.map(v=>v*20);
+let baseList = [12/2,15/2,8,9,10,12,15,16,18,20,24,30];
+let hzList = baseList.map(v=>v*25);
 let lfoPMAmp = baseList.map(v=>v*0.017/Fs*twoPI);
 let lfo1 = baseList.map(v=>v*0.011/Fs*twoPI);
 let lfo2 = baseList.map(v=>8/v/Fs*twoPI);
@@ -71,29 +71,42 @@ let phaserList  = baseList.map(v=>uni(sin(v*5)));
 let numTracks = baseList.length;
 let phaseList = new Array(numTracks).fill(0);
 let vibPhaseList = new Array(numTracks).fill(0);
-let shapers = [tanh,s=>sineCurve(s),s=>s,s=>s*s*s];
 
-let vol = 0.45;
+function cubicShaper(s){return s*s*s*1.2;}
+let shapers = [
+    tanh,tanh,
+    doNothing,doNothing,
+    doNothing,doNothing,
+    sineCurve,sineCurve,
+    sineCurve,sineCurve,
+    cubicShaper,cubicShaper
+];
+
+let vol = 0.4;
 
 let mixer = new Mixer(numTracks);
 for(let i=0;i<numTracks;i++){
-    let b = baseList[i];
-    mixer.tracks[i].setup(  (b*13.27)%2-1, vol );
+    let pan = (i%2===0?1:-1);
+    let n = i - (i%2===0?0:1);
+    pan *= 1 -n/numTracks;
+    pan *= 0.7;
+    mixer.tracks[i].setup(  pan, vol );
 }
 
+let sinMinus1 = 0.75*twoPI;
 function aRateProcess(L,R,bufferI,fi){
     for(let i=0;i<numTracks;i++){
         vibPhaseList[i] += lfoVibC[i] * ( 0.2 + uni( sin(fi*lfoVibM[i]) ) );
         let vib = sin( vibPhaseList[i]  )*0.3/12;
 
-        phaseList[i] += octave(hzList[i], vib)*twoPI/Fs;
+        phaseList[i] += octave(hzList[i], vib)*twoPIoFs;
         let mod = sin(phaseList[i]) *0.3 *uni( sin(fi*lfoPMAmp[i]) )
-        let s = lerp( sin(phaseList[i] + mod), sin(fi*hzList[i]*twoPI/Fs), phaserList[i] );
-        s *= uni( sin(fi*lfo1[i] -0.25*twoPI) );
+        let s = lerp( sin(phaseList[i] + mod), sin(fi*hzList[i]*twoPIoFs), phaserList[i] );
+        s *= uni( sin(fi*lfo1[i] +sinMinus1) );
         s *= uni( sin(fi*lfo4[i] +startList[i]) );
         s *= uni( sin(fi*lfo2[i]) );
         s *= uni( sin(fi*lfo3[i]) );
-        s = shapers[i%4](s);
+        s = shapers[i](s);
         mixer.tracks[i].input1ch(s);
     }
     mixer.output(L,R,bufferI)

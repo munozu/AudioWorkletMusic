@@ -176,7 +176,7 @@ function process (inputs, outputs, parameters) {
     const L = outputs[0][0];
     const R = outputs[0][1];
     const bufferLen = L.length;
-    kRateProcess(frame,bufferLen);
+    kRateProcess(frame,bufferLen,this);
     
     for(let i=0; i<bufferLen; i++){
         const fi = frame + i; 

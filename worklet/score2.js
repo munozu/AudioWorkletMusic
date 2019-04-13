@@ -48,7 +48,7 @@ const parameters = [
     { name: 'masterAmp', defaultValue: 0.7, minValue: 0, maxValue: 1, callback: changeMasterAmp },
     { type: "separator", value: "Reverb" },
     { name: 'reverbSeed', defaultValue: 1, minValue: 1, maxValue: 100, step:1, callback: initReverb  },
-    { name: 'reverbTime', defaultValue: 10, minValue: 0.1, maxValue:20, callback: initReverb },
+    { name: 'reverbTime', defaultValue: 5, minValue: 0.1, maxValue:30, callback: initReverb },
     { name: 'reverbIn', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbIn.setValue(v)  },
     { name: 'reverbOut', defaultValue: 0.5, minValue: 0.001, maxValue: 1,  callback: v => stReverbOut.setValue(v) },
     // { type: "separator", value: "parameters" },
@@ -68,17 +68,19 @@ function initReverb(){
     reverb1 = ReverbSchroeder.create(constParams.reverbTime,xorS);
     reverb2 = ReverbSchroeder.create(constParams.reverbTime,xorS);
 }
-initReverb();
-let stReverbIn = new SetTarget(0.5,0.1);
-let stReverbOut = new SetTarget(0.5,0.1);
-mixer.aux[0].setup(0,dBtoRatio(-25)*4,function rvbFunc(inL,inR,output){;
-    let reverbIn = stReverbIn.exec();
-    let reverbOut = stReverbOut.exec();
-    output[0] = reverb2(inL*reverbIn) * reverbOut;
-    output[1] = reverb1(inR*reverbIn) * reverbOut;
-});
-for(let i=0;i<numTracks;i++){
-    mixer.tracks[i].setup(panDivide(i,numTracks,0.9), 1.1);
+{
+    initReverb();
+    let stReverbIn = new SetTarget(0.5,0.1);
+    let stReverbOut = new SetTarget(0.5,0.1);
+    mixer.aux[0].setup(0,dBtoRatio(-26)*4,function rvbFunc(inL,inR,output){;
+        let reverbIn = stReverbIn.exec();
+        let reverbOut = stReverbOut.exec();
+        output[0] = reverb2(inL*reverbIn) * reverbOut;
+        output[1] = reverb1(inR*reverbIn) * reverbOut;
+    });
+    for(let i=0;i<numTracks;i++){
+        mixer.tracks[i].setup(panDivide(i,numTracks,0.9), 0.8);
+    }
 }
 
 // setup //////////////////////////////////////////////
@@ -98,7 +100,6 @@ function judgeBeating(hz,n){
     }
     return false;
 }  // うなりを避けるため25Hz 以内の差で音が重なるのを避ける
-//TODO: オシレーター別に計算
 
 
 let adsrList = [];
@@ -137,7 +138,8 @@ function postSetup(waveTables){
         synth.lpFilterTop = Filter.create(1,"lp");
         synth.filter = FilterBq.create(400,1.2);
         synth.osc1 = PulseOsc.create(waveTables.saw32);
-        synth.osc2 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
+        // synth.osc2 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
+        synth.osc2 = PulseOsc.createOneUseInstance(waveTables.tri32);
         synth.pwmHz = rand(1,2);
         synth.pwmHzFM = rand(0.2,0.3) *twoPIoFs;
         synth.oscMixMod = rand(0.01,0.05)*twoPIoFs;
@@ -179,16 +181,17 @@ function randOn(frame){
 
 // process //////////////////////////////////////////////
 function kRateProcess(bufferI,bufferLen){}
+
 function aRateProcess(L,R,bufferI,frame){
     if(coin(0.55/Fs))randOn(frame);
-    if(coin(0.5/Fs))adsrList[randInt(numTracks-1)].noteOff();
+    if(coin(0.4/Fs))adsrList[randInt(numTracks-1)].noteOff();
 
     for(let i=0; i<numTracks; i++){
         let synth = synths[i];
         synth.pwmPhase += (synth.pwmHz+sin(frame*synth.pwmHzFM) ) *twoPIoFs;
         let pwm = sin(synth.pwmPhase);
         let s1 = synth.osc1(synth.hz,  0.25+pwm*0.07);
-        let s2 = synth.osc2(synth.halfHz,0.25) *0.8;
+        let s2 = synth.osc2(synth.halfHz,0.25);
         let s = lerp(s1,s2,uni( sin(frame*synth.oscMixMod) ));
         // let s = lerp(s1,s2,1);
         let filterLv = filterBottom[i] +synth.lpFilterTop( filterDelta[i] );
@@ -198,4 +201,5 @@ function aRateProcess(L,R,bufferI,frame){
         mixer.tracks[i].input1ch(s);
     }
     mixer.output(L,R,bufferI);
+
 }

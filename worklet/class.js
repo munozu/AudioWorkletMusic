@@ -320,5 +320,55 @@ ReverbSchroeder.prototype.AllpassFilter = class extends ReverbSchroeder.prototyp
     }
     static create(sec, feedGain, bufSec, parent) { let c = new parent.AllpassFilter(...arguments); return c.exec.bind(c); }
 }
+
+class Stutter{
+    constructor(sec=0.3,fadeSec=0.02){
+        this.i = 0;
+        this.offCount = 0;
+        this.buffer = [];
+        this.bufferLen = round(sec*Fs);
+        this.fade = round(fadeSec*Fs);
+    }
+    on(sec){
+        if(sec)this.bufferLen = round(sec*Fs);
+        this.isOn = true;
+        this.i = -1;
+        this.buffer = [];
+    }
+    off(){
+        if(this.isOn)this.offCount = -this.fade;
+        this.isOn = false;
+    }
+    toggle(sec){
+        if(this.isOn)this.off();
+        else this.on(sec);
+    }
+    exec(input){
+        this.i++;
+        let output = input;
+        if(this.isOn){
+            if(this.i<this.bufferLen){
+                let  rec;
+                if(this.i<this.fade)rec = input*lerp(0,1,this.i/this.fade);
+                else if(this.i>this.bufferLen-this.fade){
+                    rec = input*lerp(0,1,(this.bufferLen-this.i)/this.fade);
+                    output = rec;
+                }
+                else rec = input;
+                this.buffer.push(rec);
+                return output; // recording
+            }
+            return this.buffer[this.i%this.bufferLen]; // stuttering
+        }
+        else{
+            if(++this.offCount<0){
+                let amt = (this.fade+this.offCount)/this.fade;
+                output = lerp( this.buffer[this.i%this.bufferLen], output, amt);
+            }
+            return output;
+        }
+    }
+}
+
 export {EnvelopeQuadratic, ADSR, NoiseLFO}
-export {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, WaveTableOsc, PulseOsc, Sampler}
+export {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, WaveTableOsc, PulseOsc, Sampler}

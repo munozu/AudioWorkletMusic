@@ -7,7 +7,7 @@ const gV = id => { return parseFloat(gE(id).value) };
 let info, paramContainers;
 let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, local = false, countInit = 0;
-let numScores = 3, cScoreNum = 3;
+let numScores = 4, cScoreNum = 3;
 let waveTables = {};
 {
     if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
