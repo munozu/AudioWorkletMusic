@@ -1,3 +1,4 @@
+console.log("score.js")
 import {register,changeMasterAmp} from "/worklet/processor.js"
 import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
 import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";

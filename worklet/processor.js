@@ -1,4 +1,4 @@
-
+console.log("processor.js")
 import * as wavModule from "/worklet/wav.js";
 import {SetTarget} from "/worklet/mixer.js";
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;

@@ -7,7 +7,7 @@ const gV = id => { return parseFloat(gE(id).value) };
 let info, paramContainers;
 let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, local = false, countInit = 0;
-let numScores = 4, cScoreNum = 3;
+let numScores = 4, cScoreNum = 0;
 let waveTables = {};
 {
     if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
@@ -15,9 +15,10 @@ let waveTables = {};
     if (search.get("local") == "false") local = false;
     autoStart = search.get("autoplay") != "false";
     if (search.get("score") !== null) cScoreNum = search.get("score");
-} // parse
+}
 
-window.addEventListener("load", async function setup() {
+window.addEventListener("load", setup);
+async function setup() {
     info = gE("info");
     paramContainers = gE("param-container");
     if (!local) gE("record").style.display = "none";
@@ -29,21 +30,22 @@ window.addEventListener("load", async function setup() {
     }
 
     analyser.setup();
+    console.log("fetch start");
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");
-
-    console.log("test0")
+    console.log("fetch end");
+    
     try { await init(); } catch (e) { informError(e); return; }
     setupEvents();
-});
+}
 
 function informError(e) {
     console.log(e);
     info.textContent = e.type || e;
 }
 
-function fetchWaveTable(url) {
-    fetch("wavetable/" + url)
+async function fetchWaveTable(url) {
+    return fetch("wavetable/" + url)
         .then(res => res.arrayBuffer())
         .then(buffer => new Float32Array(buffer))
         .then(array => {
@@ -56,6 +58,7 @@ function fetchWaveTable(url) {
             output.sampleRate = sampleRate;
             output.maxHarms = harms / 2;
         })
+        .then(_=>{return _})
         .catch(informError)
 }
 
