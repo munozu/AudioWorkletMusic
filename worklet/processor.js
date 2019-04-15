@@ -167,6 +167,7 @@ export function register(_parameters,_postSetup,_aRateProcess,_kRateProcess){
     registerProcessor('processor', Processor);
     registerProcessor('setup', Setup);
     registerProcessor('wavCreator', WavCreator);
+    console.log("registered")
     return constParams;
 }
 

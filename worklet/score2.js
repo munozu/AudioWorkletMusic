@@ -136,7 +136,7 @@ function postSetup(waveTables){
         filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
         
         synth.lpFilterTop = Filter.create(1,"lp");
-        synth.filter = FilterBq.create(400,1.2);
+        synth.filter = FilterBq.create(400,1);
         synth.osc1 = PulseOsc.create(waveTables.saw32);
         // synth.osc2 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
         synth.osc2 = PulseOsc.createOneUseInstance(waveTables.tri32);
@@ -164,21 +164,22 @@ function randOn(frame){
     let hz = synth.hz;
     synth.halfHz = hz/2;
 
-    let a = rand(0.4,2) * exp(-hz/3200);
+    let a = rand(0.5,6) * exp(-hz/3200);
     adsrList[n].setA(a);
     filterAdsr[n].setA(a);
-    let d = rand(0.4,2) * exp(-hz/3200);
+    let d = rand(0.5,6) * exp(-hz/3200);
     adsrList[n].setD(d);
     filterAdsr[n].setD(d);
 
-    let vol = exp(-hz/1500) * sqrt( random() );
+    let vol = lerp(1, 0.15, hz/2800) * sqrt( random() );
     adsrList[n].noteOn(vol);
     filterAdsr[n].noteOn();
-    let filTop = fractionCurve(hz/2800,-5) * 2000;
+    // let filTop = fractionCurve(hz/2800,-5) * 1800;
+    let filTop = lerp(0.3,1,hz/2800) * 1800;
+
     filterBottom[n] = filTop/2;
     filterDelta[n] = filTop- filterBottom[n];
 }
-
 // process //////////////////////////////////////////////
 function kRateProcess(bufferI,bufferLen){}
 
@@ -191,9 +192,9 @@ function aRateProcess(L,R,bufferI,frame){
         synth.pwmPhase += (synth.pwmHz+sin(frame*synth.pwmHzFM) ) *twoPIoFs;
         let pwm = sin(synth.pwmPhase);
         let s1 = synth.osc1(synth.hz,  0.25+pwm*0.07);
-        let s2 = synth.osc2(synth.halfHz,0.25);
+        let s2 = synth.osc2(synth.halfHz,0.25) *0.8;
         let s = lerp(s1,s2,uni( sin(frame*synth.oscMixMod) ));
-        // let s = lerp(s1,s2,1);
+        // let s = s1;
         let filterLv = filterBottom[i] +synth.lpFilterTop( filterDelta[i] );
         filterLv *=  filterAdsr[i].exec();
         s  = synth.filter(s, filterLv );

@@ -119,21 +119,31 @@ let notes = [];
 let numPans = 9;
 let monoTracks = new Array(numPans).fill(0).map(v=>new MonoTrack());
 let stutters = new Array(numPans).fill(0).map(v=>new Stutter());
+function nLfoInterpolate(v){return pow(v,8)}
 function pushNote(){
     let hz1 = randChoice(scale), hz2=hz1;
+    let velocity = randChoice([0.05, 0.3, 0.5, 0.7]) * lerp(1, 0.3, hz1/1500);
+    let ampMod = null;
     
     if(coin(1/3)){
         let oct = random()*0.2/12;
         hz1 = octave(hz1,-oct);
         hz2 = octave(hz1,+oct);
     }
+    else if(coin(1/2)){
+        if(coin(2/3)){
+            let hz =randChoice([4,8,16,32]);
+            let frame = 0;
+            ampMod = function sinMod(){return uni( sin(frame++*hz*twoPIoFs) );}
 
-    let ampMod = function(){return 1};
-    let velocity = randChoice([0.05, 0.3, 0.5, SQRT1_2]) * lerp(1, 0.7, hz1/1500);
-    if( hz2==hz1 ){
-        if(0&&coin())ampMod = NoiseLFO.create(50,v=>v*v*v,random);
-        else velocity /= 2;
+        }
+        else{
+            let hz =randChoice([8,16,32]);
+            ampMod = NoiseLFO.create(hz,nLfoInterpolate,random);
+        }
     }
+    else velocity /= 2;
+
     hz1 *= twoPIoFs;
     hz2 *= twoPIoFs;
     let obj = {
@@ -155,13 +165,14 @@ function pushNote(){
     }
     notes.push(obj);
 }
+
 let filterNotesEnabled = false;
 function filterNotes(){
     notes = notes.filter(v=>{if(!v.isOver)return v;});
 }
 
 let nextOnTime = 0, nextStutterTime = 2;
-let stutterEnabledSet = new Set();
+let stutterSet = new Set();
 function kRateProcess(frame,bufferLen,processor){
     // processor.info(notes.length)
     let velSum = 0;
@@ -175,16 +186,16 @@ function kRateProcess(frame,bufferLen,processor){
 
     if(t>=nextStutterTime){
         if(coin(0.3)){
-            for(let n of stutterEnabledSet)stutters[n].off();
-            stutterEnabledSet = new Set();
+            for(let s of stutterSet)s.off();
+            stutterSet = new Set();
         }
         else{
             let stutterTime = randChoice([0.2,0.4,0.8]);
             for(let i=0,l=randInt(2,4);i<l;i++){
                 let n = randInt(numPans-1);
-                stutterEnabledSet.add(n);
+                stutterSet.add(stutters[n]);
             }
-            for(let n of stutterEnabledSet)stutters[n].toggle(stutterTime);
+            for(let s of stutterSet)s.toggle(stutterTime);
         }
         nextStutterTime += rand(1,5);
     }
@@ -192,13 +203,6 @@ function kRateProcess(frame,bufferLen,processor){
 
 
 function aRateProcess(L,R,bufferInd,frame,processor){
-    // let t= frame/Fs
-    // let s = sin(frame*105.1*twoPIoFs )*sin(frame*2.1*twoPIoFs );
-    // if(frame==Fs)stutter.on();
-    // if(frame==Fs*3)stutter.off();
-    // mixer.tracks[0].input1ch( stutter.exec(s) );
-    // mixer.output(L,R,bufferInd);
-    // return;
 
     for(let i=0,l=notes.length;i<l;i++){
         let n = notes[i];
@@ -206,7 +210,8 @@ function aRateProcess(L,R,bufferInd,frame,processor){
         // n.ampEnvelope = min(1, n.ampEnvelope+ n.ampInc);
         let s1 = sin(frame*n.hz1);
         let s2 = sin(frame*n.hz2);
-        let s = lerp(s1,s2,0.5) * envelopeAHD(n.t,n.a,n.h,n.d,n.endCallback)* n.ampMod();
+        let s = lerp(s1,s2,0.5) * envelopeAHD(n.t,n.a,n.h,n.d,n.endCallback);
+        if(n.ampMod) s *= n.ampMod();
         monoTracks[n.trkNum].input(s * n.velocity);
     }
     if(filterNotesEnabled)filterNotes();

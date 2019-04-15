@@ -32,6 +32,7 @@ window.addEventListener("load", async function setup() {
     await fetchWaveTable("saw32.dat");
     await fetchWaveTable("tri32.dat");
 
+    console.log("test0")
     try { await init(); } catch (e) { informError(e); return; }
     setupEvents();
 });
@@ -74,6 +75,7 @@ function setupEvents() {
 }
 
 async function init() {
+    console.log("init")
     if (exportState == 2) return;
     connecting = false;
     if (context) context.close();
@@ -162,6 +164,7 @@ async function setupWavCreator() {
         info.textContent = "wav created";
         exportState = 0;
     }
+    console.log("test1")
 }
 
 function connect() {
