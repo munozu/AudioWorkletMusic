@@ -1,7 +1,8 @@
-import {register,changeMasterAmp} from "/worklet/processor.js"
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "/worklet/class.js";
-import {Filter, FilterBq, Delay, FeedForwardDelay, ReverbSchroeder, Sampler, WaveTableOsc, PulseOsc } from "/worklet/class.js";
-import { XorShift, Mixer, SetTarget } from "/worklet/mixer.js";
+
+import {register,changeMasterAmp} from "../worklet/processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "../worklet/class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "../worklet/class.js";
+import { XorShift, Mixer, SetTarget } from "../worklet/mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -63,6 +64,9 @@ let constParams = register(parameters,postSetup,aRateProcess,kRateProcess);
 let numTracks = 6;
 let mixer = new Mixer(numTracks,1);
 let reverb1, reverb2;
+let stReverbIn = new SetTarget(0.5,0.1);
+let stReverbOut = new SetTarget(0.5,0.1);
+
 function initReverb(){
     let xorS = new XorShift(constParams.reverbSeed)
     reverb1 = ReverbSchroeder.create(constParams.reverbTime,xorS);
@@ -70,8 +74,6 @@ function initReverb(){
 }
 {
     initReverb();
-    let stReverbIn = new SetTarget(0.5,0.1);
-    let stReverbOut = new SetTarget(0.5,0.1);
     mixer.aux[0].setup(0,dBtoRatio(-26)*4,function rvbFunc(inL,inR,output){;
         let reverbIn = stReverbIn.exec();
         let reverbOut = stReverbOut.exec();
