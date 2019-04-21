@@ -1,11 +1,16 @@
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs;
 const abs=Math.abs, acos=Math.acos, acosh=Math.acosh, asin=Math.asin, asinh=Math.asinh, atan=Math.atan, atanh=Math.atanh, atan2=Math.atan2, ceil=Math.ceil, cbrt=Math.cbrt, expm1=Math.expm1, clz32=Math.clz32, cos=Math.cos, cosh=Math.cosh, exp=Math.exp, floor=Math.floor, fround=Math.fround, hypot=Math.hypot, imul=Math.imul, log=Math.log, log1p=Math.log1p, log2=Math.log2, log10=Math.log10, max=Math.max, min=Math.min, pow=Math.pow, random=Math.random, round=Math.round, sign=Math.sign, sin=Math.sin, sinh=Math.sinh, sqrt=Math.sqrt, tan=Math.tan, tanh=Math.tanh, trunc=Math.trunc, E=Math.E, LN10=Math.LN10, LN2=Math.LN2, LOG10E=Math.LOG10E, LOG2E=Math.LOG2E, PI=Math.PI, SQRT1_2=Math.SQRT1_2, SQRT2=Math.SQRT2;
 const ratioToDB=ratio=> 20*log10(ratio)
-,   fade  =(x, sec=0.01, sec2=sec)=>{
+,   lerp = function(a,b,amt=0.5){return a*(1-amt) + b*amt}
+,   fade =(x, sec=0.01, sec2=sec)=>{
     for(let i=0, c=round(sec *Fs); i<c; i++)x[i]*=i/c;
     for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=i/c;
     return x;
-};
+}
+,   fadeDB = (x, sec=0.01, sec2=sec)=>{
+    for(let i=0, c=round(sec *Fs); i<c; i++)x[i]*= pow(10, lerp(-60, 0, i/c)/20);
+    for(let i=0, c=round(sec2*Fs), la=x.length-1; i<c; i++)x[la-i]*=pow(10, lerp(-60, 0, i/c)/20);
+}
 const setting = {
     sampleRate,
     bitsPerSample:16,

@@ -1,8 +1,8 @@
 
-import {register,changeMasterAmp} from "../worklet/processor.js"
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "../worklet/class.js";
-import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "../worklet/class.js";
-import { XorShift, Mixer, SetTarget } from "../worklet/mixer.js";
+import {register,changeMasterAmp} from "./processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "./class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "./class.js";
+import { XorShift, Mixer, SetTarget } from "./mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 
@@ -94,14 +94,33 @@ for(let i=0,a=[8,9,10,12,14];i<5;i++){
 }
 console.log(scale)
 
-function judgeBeating(hz,n){
+function ERB(hz){ return 24.7 * (4.37e-3 * hz + 1); } //equivalent rectangular bandwidth
+
+
+function isMuddy(hz,n){
     for(let i=0;i<numTracks;i++){
         if(n==i)continue;
-        let diff = abs( synths[i].hz -hz );
-        if(diff<50&&diff!=0)return true;
+        if(hz == synths[i].hz)continue;
+        if(isMuddySub(hz,synths[i].hz)){
+            // console.log([hz,synths[i].hz])
+            return true;
+        }
     }
     return false;
-}  // うなりを避けるため25Hz 以内の差で音が重なるのを避ける
+} 
+function isMuddySub(hz1, hz2) {
+    let centerHz = max(hz1, hz2);
+    let width = ERB(centerHz)*0.6;
+    if (abs(hz1 - hz2) <= width) return true;
+    else false;
+}
+
+// for(let hz1 of scale){
+//     for(let hz2 of scale ){
+//         if(hz1>=hz2)continue;
+//         if(isMuddySub(hz1,hz2))cLog([hz1,hz2]);
+//     }
+// }
 
 
 let adsrList = [];
@@ -140,9 +159,8 @@ function postSetup(waveTables){
         synth.lpFilterTop = Filter.create(1,"lp");
         synth.filter = FilterBq.create(400,1);
         synth.osc1 = PulseOsc.create(waveTables.saw32);
-        // synth.osc2 = WaveTableOsc.createOneUseInstance(waveTables.tri32);
         synth.osc2 = PulseOsc.createOneUseInstance(waveTables.tri32);
-        synth.pwmHz = rand(1,2);
+        synth.pwmHz = rand(1.5,2); // plus -1 to 1
         synth.pwmHzFM = rand(0.2,0.3) *twoPIoFs;
         synth.oscMixMod = rand(0.01,0.05)*twoPIoFs;
     }
@@ -153,7 +171,7 @@ function randOn(frame){
     let n = randInt(numTracks-1);
     let synth = synths[n];
 
-    if(frame-synth.lastOnFrame<Fs*0.1)return; // 同じオシレーターでは0.1秒以上間隔を開ける
+    if(frame-synth.lastOnFrame<Fs*0.1)return;
     synth.lastOnFrame = frame;
 
     do{
@@ -161,7 +179,7 @@ function randOn(frame){
         let maxNoteNum = scale.length* sqrt(1-adsrList[n].gain);
         synth.hz = scale[floor(r * maxNoteNum )];
     }
-    while(judgeBeating(synth.hz,n));
+    while(isMuddy(synth.hz,n));
     
     let hz = synth.hz;
     synth.halfHz = hz/2;

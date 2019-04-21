@@ -1,7 +1,7 @@
 const analyser = {
     vuTxt: [],
     buffer: null,
-    modeNum: 0,
+    modeNum: 1,
     unknownLen: 100,
     setup() {
         this.element = gE("analyser");
@@ -29,7 +29,6 @@ const analyser = {
             ctx.arc(left + x, top - y, r, 0, 2 * Math.PI, false);
             ctx.fill();
         }
-        if (local) this.modeNum = 1;
     },
     init() {
         if (this.modeNum == 0) return;

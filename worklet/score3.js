@@ -1,8 +1,8 @@
 
-import {register,changeMasterAmp} from "../worklet/processor.js"
-import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "../worklet/class.js";
-import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "../worklet/class.js";
-import { XorShift, Mixer, SetTarget } from "../worklet/mixer.js";
+import {register,changeMasterAmp} from "./processor.js"
+import {EnvelopeQuadratic, ADSR, NoiseLFO, } from "./class.js";
+import {Filter, FilterBq, Delay, FeedForwardDelay, FeedbackDelay, ReverbSchroeder, Stutter, Sampler, WaveTableOsc, PulseOsc } from "./class.js";
+import { XorShift, Mixer, SetTarget } from "./mixer.js";
 
 const Fs = sampleRate, nyquistF = Fs / 2, Ts = 1 / Fs, twoPIoFs = 2*Math.PI/Fs;
 function cLog(obj){console.log(JSON.stringify(obj))} 

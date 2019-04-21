@@ -9,8 +9,8 @@ let context, processor, wavCreator;
 let connecting, exportState = 0, autoStart, local = false, countInit = 0;
 let waveTables = {};
 
-const waveTablePromises = ["saw32.dat", "tri32.dat"].map(v=>fetchWaveTable(v));
-let numScores = 4, cScoreNum = 0;
+const waveTablePromises = ["saw32.dat", "tri32.dat"].map(v => fetchWaveTable(v));
+let numScores = 5, cScoreNum = 5;
 {
     if (document.location.href.indexOf("127.0.0.1") != -1) local = true;
     let search = new URLSearchParams(window.location.search);
@@ -49,8 +49,7 @@ function setup() {
 
     analyser.setup();
     setupEvents();
-
-    Promise.all(waveTablePromises).then(init);
+    Promise.all(waveTablePromises).then(init).catch(informError);
 }
 
 function informError(e) {
@@ -85,8 +84,6 @@ async function init() {
     context = new AudioContext({ latencyHint, sampleRate: 44100 });
 
     await context.audioWorklet.addModule(`worklet/score${cScoreNum}.js`)
-    // console.log(fetch("worklet/test.js"))
-    // await context.audioWorklet.addModule(`worklet/test.js`)
         .catch(informError);
 
     setupWorklet();

@@ -78,10 +78,10 @@ class MonoTrack{
 }
 // mixer //////////////////////////////////////////////
 const numTracks = 1;
-const mixer = new Mixer(numTracks,0);
+const mixer = new Mixer(numTracks,1);
 {
 
-    mixer.tracks[0].setup( 0, 1, null );
+    mixer.tracks[0].setup( 0, 1, null , 1);
 
     let xorS = new XorShift(1)
     let reverb1 = new ReverbSchroeder(0.2,xorS);
@@ -94,20 +94,21 @@ const mixer = new Mixer(numTracks,0);
         output[0] = reverb1.exec(inL);
         output[1] = reverb2.exec(inR);
     }
-    // mixer.aux[0].setup(0,dBtoRatio(-60),rvbFunc);
+    mixer.aux[0].setup(0,dBtoRatio(-20),rvbFunc);
 }
 
 // setup //////////////////////////////////////////////
 
+
 let scale = [];
-for(let oct=-3;oct<=1;oct++){
+for(let oct=-3;oct<=0;oct++){
     for(let n of [8,9,11,12,15])scale.push(n*100*2**oct);
 }
 {
     let tmp = [scale[0]];
     for(let i=1;i<scale.length;i++){
         if( scale[i] - tmp[tmp.length-1] >40)tmp.push(scale[i]); 
-        else tmp.push(tmp[tmp.length-1]);
+        // else tmp.push(tmp[tmp.length-1]);
     }
     scale = tmp;
     console.log(scale)
@@ -122,47 +123,63 @@ const Loudness = new class  {
         this.ampList = phon40dB.map(v=>dBtoRatio(v-70));
     }
     getEqualAmp(hz){
-        let ind =log(hz/20)/log(1.26); // hz = 20*1.26**x
+        let ind =log(hz/20)/log(1.26); // hz = 20*1.26**ind
         let x1 = floor(ind), x2=x1+1, amt = ind-x1;
         return lerp(this.ampList[x1],this.ampList[x2],amt);
     }
 }
+
 // process //////////////////////////////////////////////
 let notes = [];
 let numPans = 9;
 let monoTracks = new Array(numPans).fill(0).map(v=>new MonoTrack());
 let stutters = new Array(numPans).fill(0).map(v=>new Stutter());
-let velocityList = [-5, -10, -15, -20, -25, -30].map(v=>dBtoRatio(v));
+let velocityList = [0, 0, -10, -10, -20].map(v=>dBtoRatio(v));
 
-function nLfoInterpolate(v){return pow(v,8)}
+function nLfoInterpolate(v){return pow(v,5)}
 function pushNote(){
     let hz1 = randChoice(scale), hz2=0;
-    let loud = Loudness.getEqualAmp(hz1);
-    // let velocity = dBtoRatio(-30);
-    let velocity = loud;
-    // let velocity = randChoice(velocityList) * lerp(1, 0.3, hz1/1500) * loud;
+    let velocity =  randChoice(velocityList) * dBtoRatio( -4*log2(hz1/100) );
     let ampMod = null;
-    let mode = "raw";
-    if(0&&coin(1/3)){
-        mode = "beat";
-        let oct = random()*0.2/12;
-        hz1 = octave(hz1,-oct);
-        hz2 = octave(hz1,+oct);
-    }
-    else if(0&&coin(1/2)){
-        mode = "ampMod";
-        if(coin(2/3)){
-            let hz =randChoice([4,8,16,32]);
-            let frame = 0;
-            ampMod = function sinMod(){return uni( sin(frame++*hz*twoPIoFs) );}
+    // let mode = randChoice(["raw","beat","ampMod"]);
+    let mode = randChoice(["raw","beat"]);
+    switch(mode){
+        case "beat":
+            let diff = randChoice([2,4,8,16]);
+            diff = 8
 
-        }
-        else{
-            let hz =randChoice([8,16,32]);
-            ampMod = NoiseLFO.create(hz,nLfoInterpolate,random);
-        }
+            // let half = diff/2
+            // hz1 = hz1-half;
+            // hz2 = hz1+half; // これでは低く聞こえるのでcent単位に直す
+            
+            // baseHz * 2**+-oct = hz1, hz2
+            // log2(hz1/baseHz) = -log2(hz2/baseHz)
+            // log2(hz1*hz2/baseHz**2) = 0
+            // hz1*hz2/baseHz**2 = 1
+            // baseHz**2 = hz1*hz2 //.... 1
+            // hz2 -hz1 = diff // .... 2
+            // baseHz**2 = hz1 * (hz1 + diff)
+            // hz1**2 + diff*hz1 - baseHz**2 = 0
+            hz1 = (-diff+sqrt(diff*diff+4*hz1*hz1) ) /2;
+            hz2 = hz1+diff;
+            break;
+        case "ampMod":
+            if(coin(2/3)){
+                let hz =randChoice([4,8,16,32]);
+                if(hz1<=200) hz = min(16,hz);
+                let frame = 0;
+                ampMod = function sinMod(){return uni( sin(frame++*hz*twoPIoFs) );}
+
+            }
+            else{
+                let hz =randChoice([8,16,32]);
+                ampMod = NoiseLFO.create(hz,nLfoInterpolate,random);
+            }
+            break;
+        case "raw":
+            velocity /= 2;
+        break;
     }
-    else velocity /= 2;
 
     hz1 *= twoPIoFs;
     hz2 *= twoPIoFs;
@@ -173,9 +190,9 @@ function pushNote(){
         ampMod,
         velocity,
         t:0,
-        a:0.01,//randChoice([0.01, 0.3, 1]),
+        a:randChoice([0.01, 0.3, 1]),
         h:randChoice([1, 5, 15]),
-        d:0.01,//randChoice([0.01, 0.3, 1]),
+        d:randChoice([0.01, 0.3, 1]),
         isOver:false,
         trkNum:randInt(numPans-1),
     }
@@ -194,13 +211,12 @@ function filterNotes(){
 let nextOnTime = 0, nextStutterTime = 2;
 let stutterSet = new Set();
 function kRateProcess(frame,bufferLen,processor){
-    // processor.info(notes.length)
-    let velSum = 0;
-    for(let o of notes)velSum+=o.velocity;
-    // processor.info(velSum);
     let t = frame/Fs;
     if(t>=nextOnTime){
+        let velSum = 0;
+        for(let o of notes)velSum+=o.velocity;
         if(velSum<SQRT2)pushNote();
+        else console.log("velSum skip")
         nextOnTime += rand(5);
     }
 
@@ -222,14 +238,8 @@ function kRateProcess(frame,bufferLen,processor){
 }
 
 
+let phase = 0;
 function aRateProcess(L,R,bufferInd,frame,processor){
-    let s = 0;
-    for(let i=1;i<50;i++){
-        let hz = 100*i;
-        s += sin(frame*hz*twoPIoFs) * Loudness.getEqualAmp(hz);
-    }
-    L[bufferInd] = R[bufferInd] = s  /4;
-    return;
     for(let i=0,l=notes.length;i<l;i++){
         let n = notes[i];
         n.t += Ts;
@@ -256,7 +266,7 @@ function aRateProcess(L,R,bufferInd,frame,processor){
     filterNotesEnabled = false;
 
     for(let i=0; i<numPans; i++){
-        mixer.tracks[0].input1to2ch( stutters[i].exec( monoTracks[i].output() ), 0 );
+        mixer.tracks[0].input1to2ch( stutters[i].exec( monoTracks[i].output() ), panDivide(i,numPans,0.7) );
     }
 
     mixer.output(L,R,bufferInd);

@@ -1,3 +1,5 @@
+Number.prototype.step  = function(step=0.5){ let c=1/step; return parseInt(this*c)/c; } 
+function step(v, step=0.5){ let c=1/step; return parseInt(v*c)/c; } 
 
 function shuffle(array, m=Math) {
     for(let i=0, l=array.length-1, a=l+1, r; i<l; i++){
