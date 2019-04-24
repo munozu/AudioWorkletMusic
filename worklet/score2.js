@@ -94,34 +94,43 @@ for(let i=0,a=[8,9,10,12,14];i<5;i++){
 }
 console.log(scale)
 
-function ERB(hz){ return 24.7 * (4.37e-3 * hz + 1); } //equivalent rectangular bandwidth
-
+function criticalBandwidthERB(hz){ return 24.7 * (4.37e-3 * hz + 1); }
+const criticalBandwidth =hz=>hz<500?hz:0.2*hz
 
 function isMuddy(hz,n){
     for(let i=0;i<numTracks;i++){
         if(n==i)continue;
-        if(hz == synths[i].hz)continue;
-        if(isMuddySub(hz,synths[i].hz)){
-            // console.log([hz,synths[i].hz])
-            return true;
-        }
+        let hz2 = synths[i].hz;
+        if(hz == hz2)continue;
+        if(isMuddySub(hz/2,hz2/2))return true; //  1oct下の osc2同士
+        if(isMuddySub(hz/2,hz2))return true;
+        if(isMuddySub(hz,hz2/2))return true;
     }
     return false;
 } 
+
 function isMuddySub(hz1, hz2) {
-    let centerHz = max(hz1, hz2);
-    let width = ERB(centerHz)*0.6;
-    if (abs(hz1 - hz2) <= width) return true;
+    if(hz1==hz2)return false;
+    let centerHz  = (hz1+hz2)/2;
+    let width = criticalBandwidthERB(centerHz);
+    let diff = abs(hz1-hz2);
+    
+    if(diff <= width*0.5)return true;
     else false;
 }
 
-// for(let hz1 of scale){
-//     for(let hz2 of scale ){
-//         if(hz1>=hz2)continue;
-//         if(isMuddySub(hz1,hz2))cLog([hz1,hz2]);
+// {
+// 　　// scaleは25 組み合わせは300
+//     let count = 0;
+//     for(let hz1 of scale){
+//         for(let hz2 of scale ){
+//             if(hz1>=hz2)continue;
+//             if(isMuddySub(hz1/2,hz2/2))cLog([1,hz1,hz2,++count]);
+//             else if(isMuddySub(hz1/2,hz2))cLog([2,hz1,hz2,++count]);
+//             else if(isMuddySub(hz1,hz2/2))cLog([3,hz1,hz2,++count]);
+//         }
 //     }
 // }
-
 
 let adsrList = [];
 let filterAdsr = [];
@@ -138,11 +147,12 @@ let _synth = {
     filterBottom:500,
     filterDelta:500,
     lpFilterTop:null,
-    pwmHz:null,
-    pwmHzFM:null,
+    pwmHz:2,
+    pwmHzFM:0.2*twoPIoFs,
     pwmPhase:0,
-    hz:800,
-    halfHz:400,
+    oscMixMod:0.01*twoPIoFs,
+    hz:0,
+    halfHz:0,
     lastOnFrame:-Fs,
 }
 
@@ -156,13 +166,11 @@ function postSetup(waveTables){
         adsrList.push(new ADSR(0.2, 0.2, 0.2, 2))
         filterAdsr.push(new ADSR(0.2, 0.2, 0.3, 2))
         
-        synth.lpFilterTop = Filter.create(1,"lp");
-        synth.filter = FilterBq.create(400,1);
+        synth.lpFilterTop = Filter.create(1,"lp",800);
+        synth.filter = FilterBq.create(400,1,"lp");
         synth.osc1 = PulseOsc.create(waveTables.saw32);
         synth.osc2 = PulseOsc.createOneUseInstance(waveTables.tri32);
-        synth.pwmHz = rand(1.5,2); // plus -1 to 1
-        synth.pwmHzFM = rand(0.2,0.3) *twoPIoFs;
-        synth.oscMixMod = rand(0.01,0.05)*twoPIoFs;
+        synth.pwmHzFM = rand(0.2,0.3) *twoPIoFs; // plus -1 to 1
     }
     randOn(0);
 }
@@ -170,6 +178,7 @@ function postSetup(waveTables){
 function randOn(frame){
     let n = randInt(numTracks-1);
     let synth = synths[n];
+
 
     if(frame-synth.lastOnFrame<Fs*0.1)return;
     synth.lastOnFrame = frame;
@@ -183,6 +192,9 @@ function randOn(frame){
     
     let hz = synth.hz;
     synth.halfHz = hz/2;
+    
+    synth.pwmHz = rand(1.5,2) +log2(hz/100)*0.2;
+    synth.oscMixMod = rand(0.01,0.05)*twoPIoFs;
 
     let a = rand(0.5,6) * exp(-hz/3200);
     adsrList[n].setA(a);
@@ -196,29 +208,35 @@ function randOn(frame){
     filterAdsr[n].noteOn();
     // let filTop = fractionCurve(hz/2800,-5) * 1800;
     let filTop = lerp(0.3,1,hz/2800) * 1800;
-
+    
     filterBottom[n] = filTop/2;
     filterDelta[n] = filTop- filterBottom[n];
 }
 // process //////////////////////////////////////////////
-function kRateProcess(bufferI,bufferLen){}
+function kRateProcess(bufferI,bufferLen,processor){
+    // let num = 0;
+    // for(let s of synths){if(s.hz!=0)num++}
+    // processor.info(num)
+}
 
 function aRateProcess(L,R,bufferI,frame){
     if(coin(0.55/Fs))randOn(frame);
-    if(coin(0.4/Fs))adsrList[randInt(numTracks-1)].noteOff();
+    if(coin(1/Fs))adsrList[randInt(numTracks-1)].noteOff();
 
     for(let i=0; i<numTracks; i++){
         let synth = synths[i];
+        if(synth.hz == 0)continue;
         synth.pwmPhase += (synth.pwmHz+sin(frame*synth.pwmHzFM) ) *twoPIoFs;
         let pwm = sin(synth.pwmPhase);
         let s1 = synth.osc1(synth.hz,  0.25+pwm*0.07);
         let s2 = synth.osc2(synth.halfHz,0.25) *0.8;
         let s = lerp(s1,s2,uni( sin(frame*synth.oscMixMod) ));
-        // let s = s1;
         let filterLv = filterBottom[i] +synth.lpFilterTop( filterDelta[i] );
         filterLv *=  filterAdsr[i].exec();
         s  = synth.filter(s, filterLv );
-        s *= adsrList[i].exec();
+        let lv = adsrList[i].exec();
+        if(lv <= 0)synth.hz = 0;
+        s *= lv;
         mixer.tracks[i].input1ch(s);
     }
     mixer.output(L,R,bufferI);

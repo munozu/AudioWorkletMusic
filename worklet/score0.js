@@ -128,138 +128,23 @@ const Loudness = new class  {
     }
 }
 // process //////////////////////////////////////////////
-let notes = [];
-let numPans = 9;
-let monoTracks = new Array(numPans).fill(0).map(v=>new MonoTrack());
-let stutters = new Array(numPans).fill(0).map(v=>new Stutter());
-let velocityList = [-5, -10, -15, -20, -25, -30].map(v=>dBtoRatio(v));
-
-function nLfoInterpolate(v){return pow(v,8)}
-function pushNote(){
-    let hz1 = randChoice(scale), hz2=0;
-    let loud = Loudness.getEqualAmp(hz1);
-    // let velocity = dBtoRatio(-30);
-    let velocity = loud;
-    // let velocity = randChoice(velocityList) * lerp(1, 0.3, hz1/1500) * loud;
-    let ampMod = null;
-    let mode = "raw";
-    if(0&&coin(1/3)){
-        mode = "beat";
-        let oct = random()*0.2/12;
-        hz1 = octave(hz1,-oct);
-        hz2 = octave(hz1,+oct);
-    }
-    else if(0&&coin(1/2)){
-        mode = "ampMod";
-        if(coin(2/3)){
-            let hz =randChoice([4,8,16,32]);
-            let frame = 0;
-            ampMod = function sinMod(){return uni( sin(frame++*hz*twoPIoFs) );}
-
-        }
-        else{
-            let hz =randChoice([8,16,32]);
-            ampMod = NoiseLFO.create(hz,nLfoInterpolate,random);
-        }
-    }
-    else velocity /= 2;
-
-    hz1 *= twoPIoFs;
-    hz2 *= twoPIoFs;
-    let obj = {
-        mode,
-        hz1,
-        hz2,
-        ampMod,
-        velocity,
-        t:0,
-        a:0.01,//randChoice([0.01, 0.3, 1]),
-        h:randChoice([1, 5, 15]),
-        d:0.01,//randChoice([0.01, 0.3, 1]),
-        isOver:false,
-        trkNum:randInt(numPans-1),
-    }
-    obj.endCallback = _=>{
-        obj.isOver = true;
-        filterNotesEnabled = true;
-    }
-    notes.push(obj);
-}
-
-let filterNotesEnabled = false;
-function filterNotes(){
-    notes = notes.filter(v=>{if(!v.isOver)return v;});
-}
-
-let nextOnTime = 0, nextStutterTime = 2;
-let stutterSet = new Set();
 function kRateProcess(frame,bufferLen,processor){
-    // processor.info(notes.length)
-    let velSum = 0;
-    for(let o of notes)velSum+=o.velocity;
-    // processor.info(velSum);
-    let t = frame/Fs;
-    if(t>=nextOnTime){
-        if(velSum<SQRT2)pushNote();
-        nextOnTime += rand(5);
-    }
-
-    if(t>=nextStutterTime){
-        if(coin(0.3)){
-            for(let s of stutterSet)s.off();
-            stutterSet = new Set();
-        }
-        else{
-            let stutterTime = randChoice([0.2,0.4,0.8]);
-            for(let i=0,l=randInt(2,4);i<l;i++){
-                let n = randInt(numPans-1);
-                stutterSet.add(stutters[n]);
-            }
-            for(let s of stutterSet)s.toggle(stutterTime);
-        }
-        nextStutterTime += rand(1,5);
-    }
 }
 
 
 function aRateProcess(L,R,bufferInd,frame,processor){
+    //ring or am
+    // L[bufferInd] = R[bufferInd] = sin(200*twoPIoFs*frame)*sin(50*twoPIoFs*frame)
+    // L[bufferInd] = R[bufferInd] = sin(200*twoPIoFs*frame)*(1+sin(50*twoPIoFs*frame))/2
+    // return 
+
+    // loudness
     let s = 0;
     for(let i=1;i<50;i++){
         let hz = 100*i;
         s += sin(frame*hz*twoPIoFs) * Loudness.getEqualAmp(hz);
     }
     L[bufferInd] = R[bufferInd] = s  /4;
-    return;
-    for(let i=0,l=notes.length;i<l;i++){
-        let n = notes[i];
-        n.t += Ts;
-        let s;
-        switch (n.mode) {
-            case "raw":
-                s = sin(frame * n.hz1);
-                s = s * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback);
-                break;
-            case "ampMod":
-                s = sin(frame * n.hz1);
-                s = s * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback) * n.ampMod();
-                break;
-            case "beat":
-                let s1 = sin(frame * n.hz1);
-                let s2 = sin(frame * n.hz2);
-                s = lerp(s1, s2, 0.5) * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback);
-                break;
-
-        }
-        monoTracks[n.trkNum].input(s * n.velocity);
-    }
-    if(filterNotesEnabled)filterNotes();
-    filterNotesEnabled = false;
-
-    for(let i=0; i<numPans; i++){
-        mixer.tracks[0].input1to2ch( stutters[i].exec( monoTracks[i].output() ), 0 );
-    }
-
-    mixer.output(L,R,bufferInd);
 }
 
 function step(v, st=0.5){ let c=1/st; return parseInt(v*c)/c; } 

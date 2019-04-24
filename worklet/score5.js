@@ -38,6 +38,7 @@ const midiHz=((y=[])=>{for(let i=0;i<128;i++)y[i]=440*2**((i-69)/12);return y;})
 ,   ratioToDB=ratio=> 20*log10(ratio)
 ,   dBtoRatio=dB=> pow(10,(dB/20))
 ,   octave=function(hz,oct=0){return hz*pow(2,oct);}
+,   criticalBandwidthERB =hz=> 24.7 * (4.37e-3 * hz + 1)
 ,   panL =function(x){return cos(quarterPI*(1+x));}
 ,   panR =function(x){return sin(quarterPI*(1+x));}
 ,   panDivide=(n=0,total=4,width=0.8) => -width + n*width*2/(total-1);
@@ -136,49 +137,39 @@ let monoTracks = new Array(numPans).fill(0).map(v=>new MonoTrack());
 let stutters = new Array(numPans).fill(0).map(v=>new Stutter());
 let velocityList = [0, 0, -10, -10, -20].map(v=>dBtoRatio(v));
 
-function nLfoInterpolate(v){return pow(v,5)}
+function getLowerHzByBeatHz(centerHz,beatHz){
+    // centerHz * 2**(+-oct) = [hz1, hz2]
+    // log2(hz1/centerHz) = -log2(hz2/centerHz)
+    // log2(hz1*hz2/centerHz**2) = 0
+    // hz1*hz2/centerHz**2 = 1
+    // centerHz**2 = hz1*hz2 //.... 1
+    // hz2 -hz1 = beatHz {hz2>hz1} // .... 2
+    // centerHz**2 = hz1 * (hz1 + beatHz)
+    // hz1**2 + beatHz*hz1 - centerHz**2 = 0
+    return (-beatHz+sqrt(beatHz*beatHz+4*centerHz*centerHz) ) /2;
+}
+
+
 function pushNote(){
-    let hz1 = randChoice(scale), hz2=0;
+    let hzAM = null, hz1 = randChoice(scale), hz2=0;
     let velocity =  randChoice(velocityList) * dBtoRatio( -4*log2(hz1/100) );
-    let ampMod = null;
-    // let mode = randChoice(["raw","beat","ampMod"]);
-    let mode = randChoice(["raw","beat"]);
+    let mode = randChoice(["raw","beat","roughness"]);
     switch(mode){
         case "beat":
-            let diff = randChoice([2,4,8,16]);
-            diff = 8
-
-            // let half = diff/2
-            // hz1 = hz1-half;
-            // hz2 = hz1+half; // これでは低く聞こえるのでcent単位に直す
+            let diff;
+            do diff = randChoice([2,4,8,16]);
+            while(diff/criticalBandwidthERB(hz1)>=0.1);
             
-            // baseHz * 2**+-oct = hz1, hz2
-            // log2(hz1/baseHz) = -log2(hz2/baseHz)
-            // log2(hz1*hz2/baseHz**2) = 0
-            // hz1*hz2/baseHz**2 = 1
-            // baseHz**2 = hz1*hz2 //.... 1
-            // hz2 -hz1 = diff // .... 2
-            // baseHz**2 = hz1 * (hz1 + diff)
-            // hz1**2 + diff*hz1 - baseHz**2 = 0
-            hz1 = (-diff+sqrt(diff*diff+4*hz1*hz1) ) /2;
+            hz1 = getLowerHzByBeatHz(hz1,diff);
             hz2 = hz1+diff;
             break;
-        case "ampMod":
-            if(coin(2/3)){
-                let hz =randChoice([4,8,16,32]);
-                if(hz1<=200) hz = min(16,hz);
-                let frame = 0;
-                ampMod = function sinMod(){return uni( sin(frame++*hz*twoPIoFs) );}
-
-            }
-            else{
-                let hz =randChoice([8,16,32]);
-                ampMod = NoiseLFO.create(hz,nLfoInterpolate,random);
-            }
+        case "roughness":
+            hzAM = rand(20, min(criticalBandwidthERB(hz1),250) );
+            hzAM *= twoPIoFs;
             break;
         case "raw":
             velocity /= 2;
-        break;
+            break;
     }
 
     hz1 *= twoPIoFs;
@@ -187,7 +178,7 @@ function pushNote(){
         mode,
         hz1,
         hz2,
-        ampMod,
+        hzAM,
         velocity,
         t:0,
         a:randChoice([0.01, 0.3, 1]),
@@ -215,8 +206,8 @@ function kRateProcess(frame,bufferLen,processor){
     if(t>=nextOnTime){
         let velSum = 0;
         for(let o of notes)velSum+=o.velocity;
-        if(velSum<SQRT2)pushNote();
-        else console.log("velSum skip")
+        if(velSum<1.4&&coin(0.9))pushNote();
+        // else console.log("velSum skip")
         nextOnTime += rand(5);
     }
 
@@ -238,28 +229,26 @@ function kRateProcess(frame,bufferLen,processor){
 }
 
 
-let phase = 0;
 function aRateProcess(L,R,bufferInd,frame,processor){
     for(let i=0,l=notes.length;i<l;i++){
         let n = notes[i];
         n.t += Ts;
-        let s;
+        
+        let s = sin(frame * n.hz1);
         switch (n.mode) {
-            case "raw":
+            case "roughness":
                 s = sin(frame * n.hz1);
-                s = s * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback);
-                break;
-            case "ampMod":
-                s = sin(frame * n.hz1);
-                s = s * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback) * n.ampMod();
+                // s *= lerp(1, uni( sin(frame*n.hzAM) ) ,0.5);
+                s *= sin(frame*n.hzAM) * 0.25 + 0.75;
                 break;
             case "beat":
-                let s1 = sin(frame * n.hz1);
+                let s1 = s;
                 let s2 = sin(frame * n.hz2);
-                s = lerp(s1, s2, 0.5) * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback);
+                s = lerp(s1, s2, 0.5);
                 break;
 
         }
+        s = s * envelopeAHD(n.t, n.a, n.h, n.d, n.endCallback);
         monoTracks[n.trkNum].input(s * n.velocity);
     }
     if(filterNotesEnabled)filterNotes();
@@ -271,5 +260,3 @@ function aRateProcess(L,R,bufferInd,frame,processor){
 
     mixer.output(L,R,bufferInd);
 }
-
-function step(v, st=0.5){ let c=1/st; return parseInt(v*c)/c; } 

@@ -84,7 +84,7 @@ let thresholdEnd = 100/(2**16*0.5);
 let tt = 1/44100;
 function addNote(indInSec){
     if(list.length+waitList.length>12)return;
-    let hz = randChoice([500,500,600,750,900])/4*2**randInt(3);
+    let hz = randChoice([10,10,12,15,9*2])*100*2**randInt(-3,0);
 
     let a, d, ma, md;
     let cp = constParams;
