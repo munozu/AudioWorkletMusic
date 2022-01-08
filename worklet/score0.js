@@ -116,6 +116,7 @@ for(let oct=-3;oct<=1;oct++){
 function postSetup(_waveTables){
 }
 
+// https://en.wikipedia.org/wiki/Equal-loudness_contour
 const Loudness = new class  {
     constructor(){
         let phon40dB = [99.85, 93.94, 88.17, 82.63, 77.78, 73.08, 68.48, 64.37, 60.59, 56.7, 53.41, 50.4, 47.58, 44.98, 43.05, 41.34, 40.06, 40.01, 41.82, 42.51, 39.23, 36.51, 35.61, 36.65, 40.01, 45.83, 51.8, 54.28, 51.49, 51.96, 92.77]
